@@ -383,8 +383,41 @@ export function bonusOf(income: number, rate: number): number {
 
 const base = (o: Op) => o.amountBase ?? o.amount
 
-export function stageOps(ops: Op[], stageId: string): Op[] {
-  return ops.filter(o => o.stageId === stageId)
+/**
+ * Раскладка ленты по этапам и объектам — один проход на весь массив.
+ * Без неё каждый этап и каждая карточка человека фильтровали всю ленту
+ * заново, и на тысячах операций экран «Люди» считался секундами.
+ *
+ * Массив операций никто не правит на месте: состояние приходит с сервера
+ * целиком и заменяется целиком, поэтому раскладку можно запомнить
+ * за самим массивом.
+ */
+const byStageIndex = new WeakMap<readonly Op[], Map<string, Op[]>>()
+const byObjectIndex = new WeakMap<readonly Op[], Map<string, Op[]>>()
+
+function groupBy(ops: readonly Op[], key: (o: Op) => string): Map<string, Op[]> {
+  const out = new Map<string, Op[]>()
+  for (const o of ops) {
+    const k = key(o)
+    const list = out.get(k)
+    if (list) list.push(o)
+    else out.set(k, [o])
+  }
+  return out
+}
+
+const EMPTY_OPS: Op[] = []
+
+export function stageOps(ops: readonly Op[], stageId: string): Op[] {
+  let index = byStageIndex.get(ops)
+  if (!index) byStageIndex.set(ops, (index = groupBy(ops, o => o.stageId)))
+  return index.get(stageId) ?? EMPTY_OPS
+}
+
+export function objectOps(ops: readonly Op[], objectId: string): Op[] {
+  let index = byObjectIndex.get(ops)
+  if (!index) byObjectIndex.set(ops, (index = groupBy(ops, o => o.objectId)))
+  return index.get(objectId) ?? EMPTY_OPS
 }
 
 export function calcStage(stage: Stage, ops: Op[], shares: Share[]): StageTotals {
@@ -429,6 +462,22 @@ export function sharesFor(state: Pick<AppState, 'settings' | 'sharesByVersion'>,
 export const EMPTY_TOTALS: StageTotals = {
   inc: 0, exp: 0, adv: 0, bonus: 0, net: 0, cash: 0, debt: 0,
   usage: 0, promised: 0, parts: [], dueTotal: 0,
+}
+
+/** Пустое состояние: до входа, при ошибке сети и пока пароль временный. */
+export function emptyAppState(): AppState {
+  return {
+    me: null,
+    settings: {
+      currency: 'USD', people: [], categories: [],
+      shares: [], sharesVersion: 1, bonusScale: [], scaleVersion: 1,
+      displayRate: DEFAULT_DISPLAY_RATE,
+    },
+    archived: { people: [], categories: [] },
+    sharesByVersion: {},
+    clients: [], teams: [], budgets: [], allocations: [],
+    objects: [], stages: [], ops: [], attachments: [], users: [], totals: {},
+  }
 }
 
 /** Показатели этапа — из того, что прислал сервер с учётом роли. */
@@ -594,8 +643,8 @@ export function personSummary(state: Pick<AppState, 'ops' | 'objects' | 'stages'
       payouts: 0,
     }
 
-    for (const op of state.ops) {
-      if (op.objectId !== obj.id || op.status !== 'ok' || op.personId !== personId) continue
+    for (const op of objectOps(state.ops, obj.id)) {
+      if (op.status !== 'ok' || op.personId !== personId) continue
       if (op.isAuto) row.bonuses += base(op)
       else if (op.kind === 'adv') row.advances += base(op)
       else if (op.kind === 'exp') row.payouts += base(op)

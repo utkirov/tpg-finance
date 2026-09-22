@@ -1,4 +1,5 @@
 import type { Role } from '#shared/roles'
+import { destroyUserSessions } from '../utils/auth'
 import { hashPassword } from '../utils/password'
 
 /** Пользователи и права: создание, смена роли, сброс пароля, отключение. */
@@ -26,11 +27,22 @@ export default defineEventHandler(async (event) => {
       if (!existing) notFound('Пользователь')
       must(id !== user.id || body.active !== false, 'Нельзя отключить самого себя')
 
+      const nextRole = role ?? existing!.role
+      const active = body.active === false ? 0 : 1
+      // Без владельца приложением некому управлять: последнего не понизить и не отключить.
+      if (existing!.role === 'owner' && (nextRole !== 'owner' || !active)) {
+        const owners = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND active = 1 AND id <> ?").get(id) as { n: number }
+        must(owners.n > 0, 'Нельзя оставить приложение без владельца')
+      }
+
+      // Не прислали карточку человека — оставляем прежнюю. Иначе отключение
+      // или смена имени молча отвязывали участника от его доли.
+      const nextPerson = 'personId' in body ? personId : existing!.person_id
       db.prepare('UPDATE users SET name = ?, role = ?, person_id = ?, active = ? WHERE id = ?').run(
         text(body.name, 'имя', { max: 120 }) || existing!.name,
-        role ?? existing!.role,
-        personId,
-        body.active === false ? 0 : 1,
+        nextRole,
+        nextPerson,
+        active,
         id,
       )
       if (body.password) {
@@ -38,6 +50,8 @@ export default defineEventHandler(async (event) => {
         const { hash, salt } = hashPassword(String(body.password))
         db.prepare('UPDATE users SET pass_hash = ?, pass_salt = ?, must_change = 1 WHERE id = ?').run(hash, salt, id)
       }
+      // Сброс пароля, смена роли или отключение — старые сессии больше не действуют.
+      if (body.password || !active || nextRole !== existing!.role) destroyUserSessions(id)
       audit('user', id, 'update', { role: role ?? existing!.role, active: body.active !== false }, user.id)
       return { id }
     }

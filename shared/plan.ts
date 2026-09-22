@@ -1,4 +1,4 @@
-import { calcStage, sharesFor, splitShares, stagesOf, type AppState, type Obj, type Person, type Share, type Stage } from './calc.ts'
+import { calcStage, objectOps, sharesFor, splitShares, stageOps, stagesOf, type AppState, type Obj, type Person, type Share, type Stage } from './calc.ts'
 
 /**
  * Команды и планирование расходов.
@@ -97,8 +97,8 @@ const base = (o: { amountBase?: number; amount: number }) => o.amountBase ?? o.a
 /** Проведённые расходы объекта по командам. */
 function spentByTeam(state: PlanState, objectId: string): Map<string, number> {
   const out = new Map<string, number>()
-  for (const op of state.ops) {
-    if (op.objectId !== objectId || op.kind !== 'exp' || op.status !== 'ok' || !op.teamId) continue
+  for (const op of objectOps(state.ops, objectId)) {
+    if (op.kind !== 'exp' || op.status !== 'ok' || !op.teamId) continue
     out.set(op.teamId, (out.get(op.teamId) ?? 0) + base(op))
   }
   return out
@@ -155,8 +155,8 @@ export function teamPeople(
 ): TeamPersonRow[] {
   const team = state.teams.find(t => t.id === teamId) ?? null
   const spent = new Map<string, number>()
-  for (const op of state.ops) {
-    if (op.objectId !== objectId || op.kind !== 'exp' || op.status !== 'ok') continue
+  for (const op of objectOps(state.ops, objectId)) {
+    if (op.kind !== 'exp' || op.status !== 'ok') continue
     if (op.teamId !== teamId || !op.personId) continue
     spent.set(op.personId, (spent.get(op.personId) ?? 0) + base(op))
   }
@@ -191,8 +191,8 @@ export function teamPeople(
 /** То же самое в разрезе одного этапа. */
 export function stageTeams(state: PlanState, stageId: string): StageTeamRow[] {
   const spent = new Map<string, number>()
-  for (const op of state.ops) {
-    if (op.stageId !== stageId || op.kind !== 'exp' || op.status !== 'ok' || !op.teamId) continue
+  for (const op of stageOps(state.ops, stageId)) {
+    if (op.kind !== 'exp' || op.status !== 'ok' || !op.teamId) continue
     spent.set(op.teamId, (spent.get(op.teamId) ?? 0) + base(op))
   }
 
@@ -244,7 +244,7 @@ export function objectForecast(state: PlanState, obj: Obj, shares: Share[]): For
 
   let spent = 0
   const paid = new Map<string, number>()
-  for (const op of state.ops) {
+  for (const op of objectOps(state.ops, obj.id)) {
     if (!stageIds.has(op.stageId) || op.status !== 'ok') continue
     if (op.kind === 'exp') spent += base(op)
     if (op.kind === 'adv' && op.personId) paid.set(op.personId, (paid.get(op.personId) ?? 0) + base(op))
@@ -362,7 +362,7 @@ export function personPlan(state: PersonState, personId: string): PersonPlan {
     let paid = 0
     let promised = 0
     let dueDate: string | null = null
-    for (const op of state.ops) {
+    for (const op of objectOps(state.ops, obj.id)) {
       if (op.personId !== personId || !stageIds.has(op.stageId) || !payment(op)) continue
       if (op.status === 'ok') paid += base(op)
       else if (op.status === 'promised') {

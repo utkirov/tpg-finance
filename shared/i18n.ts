@@ -864,6 +864,12 @@ export const UZ: Record<string, string> = {
   'причина': 'sabab',
   'начало периода': 'davr boshi',
   'конец периода': 'davr oxiri',
+  /* ---------- доступ и безопасность ---------- */
+  'Сначала смените временный пароль': 'Avval vaqtinchalik parolni almashtiring',
+  'Нельзя оставить приложение без владельца': 'Ilovani egasiz qoldirib boʻlmaydi',
+  'Справочник прислан не полностью: нет раздела «{field}»': 'Maʼlumotnoma toʻliq yuborilmadi: «{field}» boʻlimi yoʻq',
+  'Код валюты — три латинские буквы, например USD': 'Valyuta kodi — uchta lotin harfi, masalan USD',
+  'Он совпадает с логином и известен всем, кто читал инструкцию по запуску. Пока его не смените, данные не откроются.': 'U login bilan bir xil va ishga tushirish yoʻriqnomasini oʻqigan hammaga maʼlum. Uni almashtirmaguningizcha maʼlumotlar ochilmaydi.',
 }
 
 const DICTS: Record<Lang, Record<string, string>> = { ru: {}, uz: UZ }

@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { BONUS_CAT, DEFAULT_DISPLAY_RATE, type Attachment, type Category, type Client, type Obj, type Op, type Person, type Settings, type Share, type Stage } from '#shared/calc'
@@ -29,6 +29,29 @@ export function useDb(): DatabaseSync {
   return handle
 }
 
+/**
+ * Подготовленные запросы переиспользуются: разбор SQL — заметная доля
+ * времени на коротких выборках, а их на одно состояние десятки.
+ */
+const statements = new Map<string, StatementSync>()
+export function stmt(sql: string): StatementSync {
+  let s = statements.get(sql)
+  if (!s) {
+    s = useDb().prepare(sql)
+    statements.set(sql, s)
+  }
+  return s
+}
+
+/**
+ * Версия данных: растёт с каждой записью. По ней проекция состояния
+ * берётся из памяти, а браузер получает 304 вместо мегабайт JSON.
+ * Время старта в версии — чтобы перезапуск не выдал старую копию за свежую.
+ */
+const BOOT = Date.now().toString(36)
+let version = 0
+export const dataVersion = () => `${BOOT}.${version}`
+
 /** Всё внутри — одной транзакцией: расчёт долей и запись не расходятся. */
 export function tx<T>(fn: () => T): T {
   const db = useDb()
@@ -36,6 +59,7 @@ export function tx<T>(fn: () => T): T {
   try {
     const out = fn()
     db.exec('COMMIT')
+    version++
     return out
   } catch (e) {
     db.exec('ROLLBACK')
@@ -49,19 +73,17 @@ export function uid(): string {
 
 /** Журнал. Записи не удаляются физически — только помечаются отменёнными. */
 export function audit(entity: string, entityId: string, action: string, details: unknown = '', userId: string | null = null) {
-  useDb()
-    .prepare('INSERT INTO audit_log (at, user_id, entity, entity_id, action, details) VALUES (?, ?, ?, ?, ?, ?)')
+  stmt('INSERT INTO audit_log (at, user_id, entity, entity_id, action, details) VALUES (?, ?, ?, ?, ?, ?)')
     .run(new Date().toISOString(), userId, entity, entityId, action, typeof details === 'string' ? details : JSON.stringify(details))
 }
 
 export function meta(key: string): string | null {
-  const row = useDb().prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined
+  const row = stmt('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined
   return row?.value ?? null
 }
 
 export function setMeta(key: string, value: string) {
-  useDb()
-    .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+  stmt('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     .run(key, value)
 }
 
@@ -279,6 +301,9 @@ function migrate(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS stages_object      ON stages(object_id);
     CREATE INDEX IF NOT EXISTS attachments_op     ON attachments(operation_id);
     CREATE INDEX IF NOT EXISTS sessions_user      ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS operations_parent  ON operations(parent_id);
+    CREATE INDEX IF NOT EXISTS audit_entity       ON audit_log(entity_id);
+    CREATE INDEX IF NOT EXISTS access_user        ON object_access(user_id);
   `)
 
   // Команда у человека появилась позже — доводим базу, заведённую до неё.
@@ -332,24 +357,24 @@ export function currentScaleVersion(): number {
 }
 
 export function sharesOfVersion(version: number): Share[] {
-  return (useDb().prepare('SELECT person_id, percent FROM shares WHERE version = ? ORDER BY percent DESC').all(version) as Row[])
+  return (stmt('SELECT person_id, percent FROM shares WHERE version = ? ORDER BY percent DESC').all(version) as Row[])
     .map(r => ({ personId: r.person_id, percent: r.percent }))
 }
 
 export function allSharesByVersion(): Record<string, Share[]> {
-  const rows = useDb().prepare('SELECT version, person_id, percent FROM shares ORDER BY version, percent DESC').all() as Row[]
+  const rows = stmt('SELECT version, person_id, percent FROM shares ORDER BY version, percent DESC').all() as Row[]
   const out: Record<string, Share[]> = {}
   for (const r of rows) (out[String(r.version)] ??= []).push({ personId: r.person_id, percent: r.percent })
   return out
 }
 
 export function scaleOfVersion(version: number) {
-  return (useDb().prepare('SELECT amount_from, amount_to, rate FROM bonus_scale WHERE version = ? ORDER BY amount_from').all(version) as Row[])
+  return (stmt('SELECT amount_from, amount_to, rate FROM bonus_scale WHERE version = ? ORDER BY amount_from').all(version) as Row[])
     .map(r => ({ from: r.amount_from, to: r.amount_to, rate: r.rate }))
 }
 
 export function readPeople(): Person[] {
-  return (useDb().prepare('SELECT * FROM people WHERE archived = 0 ORDER BY name').all() as Row[])
+  return (stmt('SELECT * FROM people WHERE archived = 0 ORDER BY name').all() as Row[])
     .map(r => ({
       id: r.id,
       name: r.name,
@@ -365,7 +390,7 @@ export function readPeople(): Person[] {
  * и отчётах их записи остались — без имён история читалась бы прочерками.
  */
 export function readArchivedPeople(): Person[] {
-  return (useDb().prepare('SELECT * FROM people WHERE archived = 1 ORDER BY name').all() as Row[])
+  return (stmt('SELECT * FROM people WHERE archived = 1 ORDER BY name').all() as Row[])
     .map(r => ({
       id: r.id,
       name: r.name,
@@ -378,7 +403,7 @@ export function readArchivedPeople(): Person[] {
 }
 
 export function readArchivedCategories(): Category[] {
-  return (useDb().prepare('SELECT * FROM categories WHERE archived = 1 ORDER BY name').all() as Row[])
+  return (stmt('SELECT * FROM categories WHERE archived = 1 ORDER BY name').all() as Row[])
     .map(r => ({
       id: r.id,
       name: r.name,
@@ -390,7 +415,7 @@ export function readArchivedCategories(): Category[] {
 }
 
 export function readCategories(): Category[] {
-  return (useDb().prepare('SELECT * FROM categories WHERE archived = 0 ORDER BY system DESC, name').all() as Row[])
+  return (stmt('SELECT * FROM categories WHERE archived = 0 ORDER BY system DESC, name').all() as Row[])
     .map(r => ({
       id: r.id,
       name: r.name,
@@ -431,18 +456,17 @@ export const toClient = (r: Row): Client => ({
 })
 
 export function readClients(): Client[] {
-  return (useDb().prepare('SELECT * FROM clients WHERE archived = 0 ORDER BY name').all() as Row[]).map(toClient)
+  return (stmt('SELECT * FROM clients WHERE archived = 0 ORDER BY name').all() as Row[]).map(toClient)
 }
 
 export function getClient(id: string): Client | null {
-  const r = useDb().prepare('SELECT * FROM clients WHERE id = ?').get(id) as Row | undefined
+  const r = stmt('SELECT * FROM clients WHERE id = ?').get(id) as Row | undefined
   return r ? toClient(r) : null
 }
 
 export function readTeams(): Team[] {
-  const db = useDb()
-  const parts = db.prepare('SELECT team_id, part_team_id FROM team_parts').all() as Row[]
-  return (db.prepare('SELECT * FROM teams WHERE archived = 0 ORDER BY composite, name').all() as Row[]).map(r => ({
+  const parts = stmt('SELECT team_id, part_team_id FROM team_parts').all() as Row[]
+  return (stmt('SELECT * FROM teams WHERE archived = 0 ORDER BY composite, name').all() as Row[]).map(r => ({
     id: r.id,
     name: r.name,
     composite: !!r.composite,
@@ -452,7 +476,7 @@ export function readTeams(): Team[] {
 }
 
 export function readBudgets(): Budget[] {
-  return (useDb().prepare('SELECT * FROM object_budgets').all() as Row[]).map(r => ({
+  return (stmt('SELECT * FROM object_budgets').all() as Row[]).map(r => ({
     objectId: r.object_id,
     teamId: r.team_id,
     personId: r.person_id || null,
@@ -462,7 +486,7 @@ export function readBudgets(): Budget[] {
 }
 
 export function readAllocations(): Allocation[] {
-  return (useDb().prepare('SELECT * FROM stage_allocations').all() as Row[]).map(r => ({
+  return (stmt('SELECT * FROM stage_allocations').all() as Row[]).map(r => ({
     stageId: r.stage_id,
     teamId: r.team_id,
     amount: r.amount,
@@ -534,57 +558,56 @@ const toAttachment = (r: Row): Attachment => ({
 })
 
 export function getObject(id: string): Obj | null {
-  const r = useDb().prepare('SELECT * FROM objects WHERE id = ?').get(id) as Row | undefined
+  const r = stmt('SELECT * FROM objects WHERE id = ?').get(id) as Row | undefined
   return r ? toObj(r) : null
 }
 
 export function getStage(id: string): Stage | null {
-  const r = useDb().prepare('SELECT * FROM stages WHERE id = ?').get(id) as Row | undefined
+  const r = stmt('SELECT * FROM stages WHERE id = ?').get(id) as Row | undefined
   return r ? toStage(r) : null
 }
 
 export function getOp(id: string): Op | null {
-  const r = useDb().prepare('SELECT * FROM operations WHERE id = ?').get(id) as Row | undefined
+  const r = stmt('SELECT * FROM operations WHERE id = ?').get(id) as Row | undefined
   return r ? toOp(r) : null
 }
 
 export function getAttachment(id: string): (Attachment & { path: string }) | null {
-  const r = useDb().prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Row | undefined
+  const r = stmt('SELECT * FROM attachments WHERE id = ?').get(id) as Row | undefined
   return r ? { ...toAttachment(r), path: r.path } : null
 }
 
 export function opsOfStage(stageId: string): Op[] {
-  return (useDb().prepare('SELECT * FROM operations WHERE stage_id = ?').all(stageId) as Row[]).map(toOp)
+  return (stmt('SELECT * FROM operations WHERE stage_id = ?').all(stageId) as Row[]).map(toOp)
 }
 
 export function stagesOfObject(objectId: string): Stage[] {
-  return (useDb().prepare('SELECT * FROM stages WHERE object_id = ? ORDER BY number').all(objectId) as Row[]).map(toStage)
+  return (stmt('SELECT * FROM stages WHERE object_id = ? ORDER BY number').all(objectId) as Row[]).map(toStage)
 }
 
 export function readObjects(): Obj[] {
-  return (useDb().prepare('SELECT * FROM objects ORDER BY created_at').all() as Row[]).map(toObj)
+  return (stmt('SELECT * FROM objects ORDER BY created_at').all() as Row[]).map(toObj)
 }
 
 export function readStages(): Stage[] {
-  return (useDb().prepare('SELECT * FROM stages ORDER BY number').all() as Row[]).map(toStage)
+  return (stmt('SELECT * FROM stages ORDER BY number').all() as Row[]).map(toStage)
 }
 
 export function readOps(): Op[] {
-  return (useDb().prepare('SELECT * FROM operations ORDER BY date, created_at').all() as Row[]).map(toOp)
+  return (stmt('SELECT * FROM operations ORDER BY date, created_at').all() as Row[]).map(toOp)
 }
 
 export function readAttachments(): Attachment[] {
-  return (useDb().prepare('SELECT * FROM attachments ORDER BY created_at').all() as Row[]).map(toAttachment)
+  return (stmt('SELECT * FROM attachments ORDER BY created_at').all() as Row[]).map(toAttachment)
 }
 
 export function insertOp(op: Op) {
-  useDb()
-    .prepare(
-      `INSERT INTO operations
-        (id, stage_id, object_id, date, kind, amount, currency, rate, amount_base, person_id, category_id,
-         team_id, off_object, note, status, due_date, is_auto, parent_id, reverses_id, created_at, created_by, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
+  stmt(
+    `INSERT INTO operations
+      (id, stage_id, object_id, date, kind, amount, currency, rate, amount_base, person_id, category_id,
+       team_id, off_object, note, status, due_date, is_auto, parent_id, reverses_id, created_at, created_by, reason)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
     .run(
       op.id, op.stageId, op.objectId, op.date, op.kind, op.amount, op.currency, op.rate, op.amountBase,
       op.personId, op.categoryId, op.teamId, op.offObject ? 1 : 0, op.note, op.status, op.dueDate,
@@ -594,7 +617,7 @@ export function insertOp(op: Op) {
 
 /** Объекты, к которым допущен пользователь без права видеть всё. */
 export function objectIdsFor(userId: string): string[] {
-  return (useDb().prepare('SELECT object_id FROM object_access WHERE user_id = ?').all(userId) as Row[])
+  return (stmt('SELECT object_id FROM object_access WHERE user_id = ?').all(userId) as Row[])
     .map(r => r.object_id)
 }
 
@@ -604,7 +627,7 @@ export function objectIdsFor(userId: string): string[] {
  * поэтому старые записи тоже видны.
  */
 export function auditForObject(objectId: string, limit = 300) {
-  const rows = useDb().prepare(
+  const rows = stmt(
     `SELECT a.id, a.at, a.user_id, a.entity, a.entity_id, a.action, a.details,
             COALESCE(u.name, '') AS user_name
        FROM audit_log a
@@ -643,7 +666,7 @@ function parseDetails(raw: string): Record<string, unknown> {
 }
 
 export function readUsers() {
-  const rows = useDb().prepare('SELECT id, login, name, role, person_id FROM users WHERE active = 1 ORDER BY name').all() as Row[]
+  const rows = stmt('SELECT id, login, name, role, person_id FROM users WHERE active = 1 ORDER BY name').all() as Row[]
   return rows.map(r => ({
     id: r.id,
     login: r.login,

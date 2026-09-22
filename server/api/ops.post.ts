@@ -56,7 +56,7 @@ export default defineEventHandler(async (event) => {
     must(stage.status !== 'closed', 'Этап закрыт — операции запрещены')
     must(stage.status !== 'check', 'Этап на сверке — новые операции заблокированы')
 
-    const currency = (text(body.currency, 'валюта', { max: 3 }) || obj.currency).toUpperCase()
+    const currency = currencyCode(body.currency, obj.currency)
     const rate = currency === obj.currency ? 1 : Number(body.rate)
     must(Number.isFinite(rate) && rate > 0 && rate < 1e9, 'Укажите курс к валюте объекта на дату операции')
     const amountBase = toBase(amount, rate)

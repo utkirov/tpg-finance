@@ -2,7 +2,7 @@
 import { ROLE_NAME } from '#shared/roles'
 import type { Lang } from '#shared/i18n'
 
-const { me, state, refresh } = useFinance()
+const { me, state, refresh, logout } = useFinance()
 const { t, lang, LANGS } = useT()
 const err = useErr()
 
@@ -21,7 +21,10 @@ async function changePassword() {
     Object.assign(form, { current: '', next: '', repeat: '' })
     message.bad = false
     message.text = t('Пароль изменён.')
+    const wasTemporary = state.value.mustChange
     await refresh()
+    // Временный пароль сменили — приложение открылось, ведём к объектам.
+    if (wasTemporary) await navigateTo('/')
   } catch (e) {
     fail(err(e))
   } finally {
@@ -34,11 +37,6 @@ function fail(text: string) {
   message.text = text
 }
 
-async function logout() {
-  await $fetch('/api/auth/logout', { method: 'POST' })
-  await refresh()
-  await navigateTo('/login')
-}
 </script>
 
 <template>
@@ -75,7 +73,7 @@ async function logout() {
           <Icon name="ph:lock-key" />
           <div>
             <b>{{ t('Временный пароль') }}</b>
-            {{ t('Он совпадает с логином и известен всем, кто читал инструкцию по запуску. Смените его.') }}
+            {{ t('Он совпадает с логином и известен всем, кто читал инструкцию по запуску. Пока его не смените, данные не откроются.') }}
           </div>
         </div>
 
