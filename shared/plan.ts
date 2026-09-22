@@ -347,7 +347,12 @@ type PersonState = PlanState & Pick<AppState, 'objects' | 'settings' | 'sharesBy
  * из ближайшего незакрытого этапа, где команде ещё выделены деньги:
  * точной даты у этапа нет, но понятно, чего ждать.
  */
-export function personPlan(state: PersonState, personId: string): PersonPlan {
+export function personPlan(
+  state: PersonState,
+  personId: string,
+  /** Перевод суммы объекта в общую валюту: итоги по разным объектам складываются. */
+  conv: (cents: number, objectId: string) => number = c => c,
+): PersonPlan {
   const person = state.settings.people.find(p => p.id === personId)
   const teamId = person?.teamId ?? null
   const basis: PersonPlan['basis'] = person?.isSharer ? 'share' : 'team'
@@ -401,10 +406,10 @@ export function personPlan(state: PersonState, personId: string): PersonPlan {
     rows.push({
       objectId: obj.id,
       objectName: obj.name,
-      expected,
-      paid,
-      left: Math.max(0, expected - paid),
-      promised,
+      expected: conv(expected, obj.id),
+      paid: conv(paid, obj.id),
+      left: conv(Math.max(0, expected - paid), obj.id),
+      promised: conv(promised, obj.id),
       dueDate,
       stageNumber,
       personal,

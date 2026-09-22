@@ -1,3 +1,4 @@
+import { markRaw } from 'vue'
 import { emptyAppState, toObjectCurrency, type AppState } from '#shared/calc'
 import { abilities, type Abilities } from '#shared/roles'
 
@@ -21,9 +22,6 @@ export function useFinance() {
   const data = useState<ClientState>('finance', emptyState)
   const pending = useState<boolean>('finance-pending', () => false)
   const loaded = useState<boolean>('finance-loaded', () => false)
-
-  // После гидратации значение из payload ещё глубоко реактивно — снимаем обёртку один раз.
-  if (import.meta.client && !isRaw(toRaw(data.value))) data.value = markRaw(toRaw(data.value))
 
   async function refresh() {
     // На сервере нужны куки входящего запроса — иначе сессия не видна.
@@ -102,7 +100,7 @@ export function useFinance() {
   async function send<T>(url: string, options: { method: 'POST' | 'PUT' | 'DELETE'; body?: unknown }): Promise<T> {
     const result = await $fetch<T>(url, options as never)
     await refresh()
-    return result
+    return result as T
   }
 
   /** Выход: сессия на сервере, состояние в памяти и всё, что браузер успел сохранить. */

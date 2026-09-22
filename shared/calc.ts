@@ -628,7 +628,12 @@ export interface PersonSummary {
 }
 
 /** Карточка человека: все объекты, где он встречается, и суммы по типам. */
-export function personSummary(state: Pick<AppState, 'ops' | 'objects' | 'stages' | 'settings' | 'sharesByVersion'>, personId: string): PersonSummary {
+export function personSummary(
+  state: Pick<AppState, 'ops' | 'objects' | 'stages' | 'settings' | 'sharesByVersion'>,
+  personId: string,
+  /** Перевод суммы объекта в общую валюту — итоги по объектам складываются. */
+  conv: (cents: number, objectId: string) => number = c => c,
+): PersonSummary {
   const rows: PersonObjectRow[] = []
 
   for (const obj of state.objects) {
@@ -658,7 +663,10 @@ export function personSummary(state: Pick<AppState, 'ops' | 'objects' | 'stages'
       }
     }
 
-    if (row.bonuses || row.advances || row.accrued || row.payouts) rows.push(row)
+    if (row.bonuses || row.advances || row.accrued || row.payouts) {
+      for (const key of ['bonuses', 'advances', 'accrued', 'due', 'payouts'] as const) row[key] = conv(row[key], obj.id)
+      rows.push(row)
+    }
   }
 
   const total = (pick: keyof PersonObjectRow) => rows.reduce((a, r) => a + (r[pick] as number), 0)

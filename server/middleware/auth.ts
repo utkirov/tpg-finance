@@ -12,7 +12,8 @@ export default defineEventHandler((event) => {
   // Пароль «как логин» знает любой, кто видел README: пока его не сменили,
   // сервер не отдаёт и не принимает ничего, кроме смены пароля.
   const path = event.path.split('?')[0]!
-  if (user?.mustChange && !OPEN_WITH_TEMP_PASSWORD.has(path)) {
+  // /api/_… — служебные маршруты модулей (значки): данных в них нет.
+  if (user?.mustChange && !path.startsWith('/api/_') && !OPEN_WITH_TEMP_PASSWORD.has(path)) {
     denied('Сначала смените временный пароль', 403)
   }
 })

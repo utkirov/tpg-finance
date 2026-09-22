@@ -41,13 +41,9 @@ function fail(text: string) {
 
 <template>
   <div>
-    <div class="head-row">
-      <div>
-        <h1>{{ me?.name }}</h1>
-        <p class="sub">{{ me ? t(ROLE_NAME[me.role]) : '' }} · {{ t('логин {login}', { login: me?.login ?? '' }) }}</p>
-      </div>
+    <PageHead :title="me?.name ?? ''" :sub="`${me ? t(ROLE_NAME[me.role]) : ''} · ${t('логин {login}', { login: me?.login ?? '' })}`">
       <button type="button" class="btn" @click="logout"><Icon name="ph:sign-out" />{{ t('Выйти') }}</button>
-    </div>
+    </PageHead>
 
     <section class="sect">
       <h2>{{ t('Язык') }}</h2>

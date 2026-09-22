@@ -1,277 +1,391 @@
 <script setup lang="ts">
-import {
-  BONUS_CAT, categoryReport, currencyLabel, dmy, formatMoney, objectTotals, percent,
-  periodRange, periodReport, type PeriodRow,
-} from '#shared/calc'
+import { BONUS_CAT, currencyLabel, dmy, formatMoney, percent, periodRange, type PeriodRow } from '#shared/calc'
+import { buildStats, type Delta } from '#shared/stats'
+import type { Column } from '~/components/DataTable.vue'
+import type { PeriodValue } from '~/components/PeriodFilter.vue'
 
-/** Сводная аналитика за период: по всем объектам сразу или по одному. */
+/**
+ * Статистика за период по всем объектам сразу или по одному.
+ * Всё сведено в основную валюту справочников по курсу каждого объекта:
+ * переключатель USD / SUM в шапке сюда не лезет — у сводки своя валюта.
+ */
 const { state, can } = useFinance()
 const { t } = useT()
 const router = useRouter()
 
-const filter = reactive({ objectId: '', ...periodRange('year') })
+const filter = ref<PeriodValue>({ objectId: '', ...periodRange('year') })
 
-const report = computed(() => periodReport(state.value, {
-  objectId: filter.objectId || undefined,
-  from: filter.from || undefined,
-  to: filter.to || undefined,
+const stats = computed(() => buildStats(state.value, {
+  objectId: filter.value.objectId || undefined,
+  from: filter.value.from || undefined,
+  to: filter.value.to || undefined,
 }))
+const report = computed(() => stats.value.report)
 
-/** Сводка в одной валюте — переключатель показа сюда не лезет. */
-const sum = (cents: number) => formatMoney(cents, report.value.currency)
-const label = computed(() => currencyLabel(report.value.currency))
+const code = computed(() => report.value.currency)
+const label = computed(() => currencyLabel(code.value))
+const sum = (cents: number) => formatMoney(cents, code.value)
+/** Для осей графиков: целые, без копеек. */
+const axis = (cents: number) => formatMoney(cents, code.value, true)
 
-const cats = computed(() => categoryReport(state.value, {
-  objectId: filter.objectId || undefined,
-  from: filter.from || undefined,
-  to: filter.to || undefined,
-}))
+/** «↑ 12 % к прошлому периоду» — без цвета: рост расходов не всегда плохо. */
+function versus(d: Delta, fallback: string): string {
+  if (d.change === null) return fallback
+  const arrow = d.change > 0 ? '↑' : d.change < 0 ? '↓' : '='
+  return t('{arrow} {percent} к прошлому периоду ({amount})', {
+    arrow,
+    percent: percent(Math.abs(d.change)),
+    amount: sum(d.before),
+  })
+}
 
-const debt = computed(() => {
-  const list = filter.objectId
-    ? state.value.objects.filter(o => o.id === filter.objectId)
-    : state.value.objects
-  return list.reduce((a, o) => a + objectTotals(state.value, o.id).debt, 0)
-})
-
-const kpis = computed(() => [
+const periodKpis = computed(() => [
   {
     label: t('Получено за период'),
     icon: 'ph:arrow-down-left',
-    value: sum(report.value.inc),
-    sub: t('операций: {count}', { count: report.value.count }),
+    value: sum(stats.value.inc.now),
+    sub: versus(stats.value.inc, t('приходов: {count}', { count: stats.value.incomeCount })),
     tone: 'acc' as const,
   },
   {
     label: t('Расходы за период'),
     icon: 'ph:receipt',
-    value: sum(report.value.exp),
-    sub: report.value.bonus
-      ? t('в т. ч. бонус {amount}', { amount: sum(report.value.bonus) })
-      : t('по всем категориям'),
+    value: sum(stats.value.exp.now),
+    sub: versus(stats.value.exp, t('по всем категориям')),
   },
   {
     label: t('Авансы за период'),
     icon: 'ph:hand-coins',
-    value: sum(report.value.adv),
-    sub: t('выдано участникам'),
+    value: sum(stats.value.adv.now),
+    sub: versus(stats.value.adv, t('выдано участникам')),
   },
   {
     label: t('Движение денег'),
     icon: 'ph:wallet',
-    value: sum(report.value.flow),
-    sub: t('приход − расход − авансы'),
-    tone: report.value.flow < 0 ? ('bad' as const) : undefined,
+    value: sum(stats.value.flow.now),
+    sub: versus(stats.value.flow, t('приход − расход − авансы')),
+    tone: stats.value.flow.now < 0 ? ('bad' as const) : undefined,
   },
 ])
 
-/** Помесячно: полоса от самого большого месяца. */
-const peak = computed(() =>
-  Math.max(1, ...report.value.months.map(x => Math.max(x.inc, x.out))))
+const portfolioKpis = computed(() => {
+  const p = stats.value.portfolio
+  const pr = stats.value.promised
+  return [
+    { label: t('Сумма договоров'), icon: 'ph:handshake', value: sum(p.contract), sub: t('объектов: {count}', { count: stats.value.objects.length }) },
+    { label: t('Получено всего'), icon: 'ph:arrow-down-left', value: sum(p.received), sub: t('собрано {percent} от этапов', { percent: percent(p.collected) }) },
+    { label: t('Дебиторка'), icon: 'ph:hand-coins', value: sum(p.debt), sub: t('заказчики ещё должны') },
+    {
+      label: t('Обязательства'),
+      icon: 'ph:clock-countdown',
+      value: sum(pr.total),
+      sub: pr.overdue ? t('просрочено {amount}', { amount: sum(pr.overdue) }) : t('записей: {count}', { count: pr.count }),
+      tone: pr.overdue ? ('bad' as const) : pr.soon ? ('warn' as const) : undefined,
+    },
+  ]
+})
+
+const facts = computed(() => [
+  { label: t('Средний приход'), value: sum(stats.value.avgIncome) },
+  { label: t('Крупнейший расход'), value: sum(stats.value.biggestExpense) },
+  { label: t('Доля бонуса в расходах'), value: percent(stats.value.bonusShare, 1) },
+  { label: t('Операций за период'), value: String(report.value.count) },
+  { label: t('Касса по объектам'), value: sum(stats.value.portfolio.cash) },
+])
+
+/* ---------- графики ---------- */
 
 const monthName = (m: string) => {
   const [y, mm] = m.split('-')
   return `${mm}.${String(y).slice(2)}`
 }
+const months = computed(() => stats.value.months)
+const monthLabels = computed(() => months.value.map(m => monthName(m.month)))
+const monthSeries = computed(() => [
+  { label: t('Приход'), data: months.value.map(m => m.inc), slot: 1 as const },
+  { label: t('Расходы и авансы'), data: months.value.map(m => m.out), slot: 2 as const },
+])
+const balanceSeries = computed(() => [
+  { label: t('Остаток'), data: months.value.map(m => m.balance), slot: 1 as const },
+])
 
-function setRange(kind: 'month' | 'quarter' | 'year' | 'all') {
-  Object.assign(filter, periodRange(kind))
+const catLabels = computed(() => stats.value.categories.map(r => t(r.name)))
+const catSeries = computed(() => [
+  { label: t('Расходы'), data: stats.value.categories.map(r => r.exp), slot: 1 as const },
+])
+
+const teamLabels = computed(() => stats.value.teams.map(r => r.name))
+const teamSeries = computed(() => [
+  { label: t('План'), data: stats.value.teams.map(r => r.planned), slot: 1 as const },
+  { label: t('Потрачено'), data: stats.value.teams.map(r => r.spent), slot: 2 as const },
+])
+
+const objLabels = computed(() => stats.value.objects.map(r => r.name))
+const objSeries = computed(() => [
+  { label: t('Получено'), data: stats.value.objects.map(r => r.received), slot: 1 as const },
+  { label: t('Дебиторка'), data: stats.value.objects.map(r => r.debt), slot: 2 as const },
+])
+
+/** Высота горизонтального графика — по числу строк, чтобы подписи не слипались. */
+const rowsHeight = (n: number) => Math.max(160, 44 + n * 34)
+
+/* ---------- таблицы ---------- */
+
+const flowColumns = computed<Column[]>(() => [
+  { key: 'name', label: t('Название'), desc: true },
+  { key: 'inc', label: t('Приход'), num: true },
+  { key: 'exp', label: t('Расходы'), num: true },
+  { key: 'adv', label: t('Авансы'), num: true },
+  { key: 'flow', label: t('Итого'), num: true },
+])
+
+const totalOf = (rows: PeriodRow[]) => {
+  const s = rows.reduce(
+    (a, r) => ({ inc: a.inc + r.inc, exp: a.exp + r.exp, adv: a.adv + r.adv, flow: a.flow + r.flow }),
+    { inc: 0, exp: 0, adv: 0, flow: 0 },
+  )
+  return { name: t('Итого'), inc: sum(s.inc), exp: sum(s.exp), adv: sum(s.adv), flow: sum(s.flow) }
 }
-
-const ranges = [
-  { key: 'month' as const, label: 'Месяц' },
-  { key: 'quarter' as const, label: 'Квартал' },
-  { key: 'year' as const, label: 'Год' },
-  { key: 'all' as const, label: 'Всё время' },
-]
-
-const active = computed(() => {
-  const found = ranges.find(r => {
-    const range = periodRange(r.key)
-    return range.from === filter.from && range.to === filter.to
-  })
-  return found?.key ?? ''
-})
-
-const totalOf = (rows: PeriodRow[]) => rows.reduce(
-  (a, r) => ({ inc: a.inc + r.inc, exp: a.exp + r.exp, adv: a.adv + r.adv, flow: a.flow + r.flow }),
-  { inc: 0, exp: 0, adv: 0, flow: 0 },
-)
 
 const blocks = computed(() => [
   { key: 'objects', title: t('По объектам'), icon: 'ph:buildings', rows: report.value.objects, link: true },
   { key: 'teams', title: t('По командам'), icon: 'ph:users-three', rows: report.value.teams, link: false },
   { key: 'people', title: t('Кому выплачено'), icon: 'ph:user', rows: report.value.people, link: false },
-].map(b => ({ ...b, sum: totalOf(b.rows) })))
+])
+
+const catColumns = computed<Column[]>(() => [
+  { key: 'name', label: t('Категория'), desc: true },
+  { key: 'exp', label: t('Сумма'), num: true },
+  { key: 'share', label: t('Доля'), num: true },
+])
+const catTotal = computed(() => report.value.categories.reduce((a, r) => a + r.exp, 0))
+
+const monthColumns = computed<Column[]>(() => [
+  { key: 'month', label: t('Месяц'), desc: true },
+  { key: 'inc', label: t('Приход'), num: true },
+  { key: 'out', label: t('Расходы и авансы'), num: true },
+  { key: 'flow', label: t('Движение'), num: true },
+  { key: 'balance', label: t('Остаток'), num: true },
+])
+
+const objColumns = computed<Column[]>(() => [
+  { key: 'name', label: t('Объект'), desc: true },
+  { key: 'contract', label: t('Договор'), num: true },
+  { key: 'received', label: t('Получено'), num: true },
+  { key: 'debt', label: t('Дебиторка'), num: true },
+  { key: 'cash', label: t('Касса'), num: true },
+])
+
+const teamColumns = computed<Column[]>(() => [
+  { key: 'name', label: t('Команда'), desc: true },
+  { key: 'planned', label: t('План'), num: true },
+  { key: 'spent', label: t('Потрачено'), num: true },
+  { key: 'rest', label: t('Осталось'), num: true },
+])
 
 const print = () => window.print()
 const exportUrl = computed(() =>
   `/api/export?${new URLSearchParams({
-    ...(filter.objectId ? { object: filter.objectId } : {}),
-    ...(filter.from ? { from: filter.from } : {}),
-    ...(filter.to ? { to: filter.to } : {}),
+    ...(filter.value.objectId ? { object: filter.value.objectId } : {}),
+    ...(filter.value.from ? { from: filter.value.from } : {}),
+    ...(filter.value.to ? { to: filter.value.to } : {}),
   })}`)
 
-const flowClass = (row: PeriodRow) => (row.flow < 0 ? 'neg' : '')
+const periodText = computed(() => filter.value.from || filter.value.to
+  ? t('с {from} по {to}', {
+      from: filter.value.from ? dmy(filter.value.from) : '…',
+      to: filter.value.to ? dmy(filter.value.to) : '…',
+    })
+  : t('за всё время'))
 </script>
 
 <template>
   <div>
-    <div class="head-row">
-      <div>
-        <h1>{{ t('Сводка за период') }}</h1>
-        <p class="sub">
-          {{ filter.from || filter.to
-            ? t('с {from} по {to}', { from: filter.from ? dmy(filter.from) : '…', to: filter.to ? dmy(filter.to) : '…' })
-            : t('за всё время') }}
-          · {{ t('суммы сведены в {currency}', { currency: label }) }}
-        </p>
-      </div>
-      <div class="acts no-print">
-        <button type="button" class="btn" @click="print"><Icon name="ph:printer" />{{ t('Печать') }}</button>
-        <a v-if="can.seeAllShares" class="btn" :href="exportUrl"><Icon name="ph:file-xls" />{{ t('Excel') }}</a>
-      </div>
-    </div>
+    <PageHead :title="t('Статистика')">
+      <template #sub>
+        {{ periodText }} · {{ t('суммы сведены в {currency}', { currency: label }) }}
+        <template v-if="stats.previous">
+          · {{ t('сравнение с {from} – {to}', { from: dmy(stats.previous.from), to: dmy(stats.previous.to) }) }}
+        </template>
+      </template>
+      <button type="button" class="btn" @click="print"><Icon name="ph:printer" />{{ t('Печать') }}</button>
+      <a v-if="can.seeAllShares" class="btn" :href="exportUrl"><Icon name="ph:file-xls" />{{ t('Excel') }}</a>
+    </PageHead>
 
-    <div class="filters no-print">
-      <div class="f">
-        <label>{{ t('Период') }}</label>
-        <div class="seg">
-          <button
-            v-for="r in ranges"
-            :key="r.key"
-            type="button"
-            :aria-pressed="active === r.key"
-            @click="setRange(r.key)"
-          >
-            {{ t(r.label) }}
-          </button>
+    <PeriodFilter v-model="filter" :objects="state.objects" />
+
+    <KpiStrip :items="periodKpis" />
+
+    <section class="sect">
+      <h2><Icon name="ph:briefcase" />{{ t('Портфель на сегодня') }}</h2>
+      <KpiStrip :items="portfolioKpis" />
+      <dl class="facts panel">
+        <div v-for="f in facts" :key="f.label">
+          <dt>{{ f.label }}</dt>
+          <dd class="num">{{ f.value }}</dd>
         </div>
-      </div>
-      <div class="f">
-        <label for="rp-from">{{ t('С') }}</label>
-        <input id="rp-from" v-model="filter.from" type="date">
-      </div>
-      <div class="f">
-        <label for="rp-to">{{ t('По') }}</label>
-        <input id="rp-to" v-model="filter.to" type="date">
-      </div>
-      <div class="f">
-        <label for="rp-obj">{{ t('Объект') }}</label>
-        <select id="rp-obj" v-model="filter.objectId">
-          <option value="">{{ t('все объекты') }}</option>
-          <option v-for="o in state.objects" :key="o.id" :value="o.id">{{ o.name }}</option>
-        </select>
-      </div>
-    </div>
+      </dl>
+    </section>
 
-    <KpiStrip :items="kpis" />
-
-    <div v-if="!report.count" class="empty">
-      <Icon name="ph:chart-bar" />
-      <p>{{ t('За этот период операций не было. Возьмите период шире.') }}</p>
-    </div>
+    <EmptyState v-if="!report.count" icon="ph:chart-bar" :text="t('За этот период операций не было. Возьмите период шире.')" />
 
     <template v-else>
-      <section v-if="report.months.length > 1" class="sect">
-        <h2><Icon name="ph:chart-bar" />{{ t('По месяцам') }}</h2>
-        <div class="panel months">
-          <div v-for="mo in report.months" :key="mo.month" class="mo">
-            <div class="bars">
-              <i class="in" :style="{ height: `${Math.round((mo.inc / peak) * 100)}%` }" :title="sum(mo.inc)" />
-              <i class="out" :style="{ height: `${Math.round((mo.out / peak) * 100)}%` }" :title="sum(mo.out)" />
-            </div>
-            <span>{{ monthName(mo.month) }}</span>
-          </div>
-        </div>
-        <p class="hint" style="margin-top: 10px">
-          {{ t('Слева приход, справа расходы с авансами. Самый высокий столбик — {amount}.', { amount: sum(peak) }) }}
-        </p>
+      <div class="viz-grid">
+        <section class="panel viz">
+          <h3>{{ t('Приход и расход по месяцам') }}</h3>
+          <ChartBox kind="bar" :labels="monthLabels" :series="monthSeries" :format="axis" :label="t('Приход и расход по месяцам')" />
+        </section>
+
+        <section class="panel viz">
+          <h3>{{ t('Остаток нарастающим итогом') }}</h3>
+          <p class="hint">{{ t('Сколько денег осталось с начала периода, месяц за месяцем.') }}</p>
+          <ChartBox kind="line" :labels="monthLabels" :series="balanceSeries" :format="axis" :label="t('Остаток нарастающим итогом')" />
+        </section>
+
+        <section v-if="stats.categories.length" class="panel viz">
+          <h3>{{ t('Расходы по категориям') }}</h3>
+          <ChartBox
+            kind="bar"
+            horizontal
+            :labels="catLabels"
+            :series="catSeries"
+            :format="axis"
+            :height="rowsHeight(catLabels.length)"
+            :label="t('Расходы по категориям')"
+          />
+        </section>
+
+        <section v-if="stats.teams.length" class="panel viz">
+          <h3>{{ t('Команды: план и факт') }}</h3>
+          <ChartBox
+            kind="bar"
+            horizontal
+            :labels="teamLabels"
+            :series="teamSeries"
+            :format="axis"
+            :height="rowsHeight(teamLabels.length * 1.6)"
+            :label="t('Команды: план и факт')"
+          />
+        </section>
+
+        <section v-if="stats.objects.length > 1" class="panel viz wide">
+          <h3>{{ t('Объекты: получено и долг') }}</h3>
+          <p class="hint">{{ t('Длина полосы — сумма этапов; слева получено, справа ещё должны.') }}</p>
+          <ChartBox
+            kind="bar"
+            horizontal
+            stacked
+            :labels="objLabels"
+            :series="objSeries"
+            :format="axis"
+            :height="rowsHeight(objLabels.length)"
+            :label="t('Объекты: получено и долг')"
+          />
+        </section>
+      </div>
+
+      <section class="sect">
+        <h2><Icon name="ph:calendar" />{{ t('По месяцам') }}</h2>
+        <DataTable :columns="monthColumns" :rows="months" :row-key="r => r.month">
+          <template #cell-month="{ row }"><b>{{ monthName(row.month) }}</b></template>
+          <template #cell-inc="{ row }">{{ row.inc ? sum(row.inc) : '—' }}</template>
+          <template #cell-out="{ row }">{{ row.out ? sum(row.out) : '—' }}</template>
+          <template #cell-flow="{ row }"><span :class="{ neg: row.flow < 0 }">{{ sum(row.flow) }}</span></template>
+          <template #cell-balance="{ row }"><span :class="{ neg: row.balance < 0 }">{{ sum(row.balance) }}</span></template>
+        </DataTable>
+      </section>
+
+      <section v-if="stats.objects.length" class="sect">
+        <h2><Icon name="ph:buildings" />{{ t('Договоры и дебиторка') }}</h2>
+        <DataTable
+          :columns="objColumns"
+          :rows="stats.objects"
+          :row-key="r => r.id"
+          clickable
+          :total="{
+            name: t('Итого'),
+            contract: sum(stats.portfolio.contract),
+            received: sum(stats.portfolio.received),
+            debt: sum(stats.portfolio.debt),
+            cash: sum(stats.portfolio.cash),
+          }"
+          @open="r => router.push(`/objects/${r.id}`)"
+        >
+          <template #cell-name="{ row }"><b>{{ row.name }}</b></template>
+          <template #cell-contract="{ row }">{{ sum(row.contract) }}</template>
+          <template #cell-received="{ row }">{{ sum(row.received) }}</template>
+          <template #cell-debt="{ row }">{{ sum(row.debt) }}</template>
+          <template #cell-cash="{ row }"><span :class="{ neg: row.cash < 0 }">{{ sum(row.cash) }}</span></template>
+        </DataTable>
+      </section>
+
+      <section v-if="stats.teams.length" class="sect">
+        <h2><Icon name="ph:users-three" />{{ t('Команды: план и факт') }}</h2>
+        <DataTable :columns="teamColumns" :rows="stats.teams" :row-key="r => r.id">
+          <template #cell-name="{ row }"><b>{{ row.name }}</b></template>
+          <template #cell-planned="{ row }">{{ row.planned ? sum(row.planned) : '—' }}</template>
+          <template #cell-spent="{ row }">{{ sum(row.spent) }}</template>
+          <template #cell-rest="{ row }">
+            <span :class="{ neg: row.spent > row.planned && row.planned > 0 }">
+              {{ row.planned ? sum(row.planned - row.spent) : '—' }}
+            </span>
+          </template>
+        </DataTable>
       </section>
 
       <section v-for="b in blocks" :key="b.key" class="sect">
-        <h2><Icon :name="b.icon" />{{ b.title }}</h2>
-        <div v-if="!b.rows.length" class="empty"><Icon name="ph:tray" /><p>{{ t('Пусто за этот период.') }}</p></div>
-        <div v-else class="tw">
-          <table class="stack">
-            <thead>
-              <tr>
-                <th>{{ t('Название') }}</th>
-                <th class="n">{{ t('Приход') }}</th>
-                <th class="n">{{ t('Расходы') }}</th>
-                <th class="n">{{ t('Авансы') }}</th>
-                <th class="n">{{ t('Итого') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in b.rows"
-                :key="row.id"
-                :class="{ click: b.link }"
-                @click="b.link ? router.push(`/objects/${row.id}`) : null"
-              >
-                <td class="desc"><b>{{ t(row.name) }}</b></td>
-                <td class="n" :data-label="t('Приход')">{{ row.inc ? sum(row.inc) : '—' }}</td>
-                <td class="n" :data-label="t('Расходы')">{{ row.exp ? sum(row.exp) : '—' }}</td>
-                <td class="n" :data-label="t('Авансы')">{{ row.adv ? sum(row.adv) : '—' }}</td>
-                <td class="n" :data-label="t('Итого')" :class="flowClass(row)">{{ sum(row.flow) }}</td>
-              </tr>
-              <tr class="tot">
-                <td>{{ t('Итого') }}</td>
-                <td class="n" :data-label="t('Приход')">{{ sum(b.sum.inc) }}</td>
-                <td class="n" :data-label="t('Расходы')">{{ sum(b.sum.exp) }}</td>
-                <td class="n" :data-label="t('Авансы')">{{ sum(b.sum.adv) }}</td>
-                <td class="n" :data-label="t('Итого')">{{ sum(b.sum.flow) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <h2><Icon :name="b.icon" />{{ b.title }} · {{ t('движение за период') }}</h2>
+        <EmptyState v-if="!b.rows.length" :text="t('Пусто за этот период.')" />
+        <DataTable
+          v-else
+          :columns="flowColumns"
+          :rows="b.rows"
+          :row-key="r => r.id"
+          :clickable="b.link"
+          :total="totalOf(b.rows)"
+          @open="r => router.push(`/objects/${r.id}`)"
+        >
+          <template #cell-name="{ row }"><b>{{ t(row.name) }}</b></template>
+          <template #cell-inc="{ row }">{{ row.inc ? sum(row.inc) : '—' }}</template>
+          <template #cell-exp="{ row }">{{ row.exp ? sum(row.exp) : '—' }}</template>
+          <template #cell-adv="{ row }">{{ row.adv ? sum(row.adv) : '—' }}</template>
+          <template #cell-flow="{ row }"><span :class="{ neg: row.flow < 0 }">{{ sum(row.flow) }}</span></template>
+        </DataTable>
       </section>
 
       <section class="sect">
         <h2><Icon name="ph:tag" />{{ t('По категориям расходов') }}</h2>
-        <div class="tw">
-          <table class="stack">
-            <thead>
-              <tr>
-                <th>{{ t('Категория') }}</th>
-                <th class="n">{{ t('Сумма') }}</th>
-                <th class="n">{{ t('Доля') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in cats.rows" :key="row.categoryId" :class="{ auto: row.categoryId === BONUS_CAT }">
-                <td class="desc"><b>{{ t(row.name) }}</b></td>
-                <td class="n" :data-label="t('Сумма')">{{ sum(row.amount) }}</td>
-                <td class="n" :data-label="t('Доля')">{{ percent(row.share, 1) }}</td>
-              </tr>
-              <tr class="tot">
-                <td>{{ t('Итого') }}</td>
-                <td class="n" :data-label="t('Сумма')">{{ sum(cats.total) }}</td>
-                <td class="n" :data-label="t('Доля')">100 %</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          :columns="catColumns"
+          :rows="report.categories.filter(r => r.exp > 0)"
+          :row-key="r => r.id"
+          :row-class="r => (r.id === BONUS_CAT ? 'auto' : undefined)"
+          :total="{ name: t('Итого'), exp: sum(catTotal), share: '100 %' }"
+        >
+          <template #cell-name="{ row }"><b>{{ t(row.name) }}</b></template>
+          <template #cell-exp="{ row }">{{ sum(row.exp) }}</template>
+          <template #cell-share="{ row }">{{ percent(catTotal ? row.exp / catTotal : 0, 1) }}</template>
+        </DataTable>
       </section>
-
-      <p v-if="can.seeContract" class="hint">
-        {{ t('Заказчики ещё должны {amount} — это за всё время, а не за период.', { amount: sum(debt) }) }}
-      </p>
     </template>
   </div>
 </template>
 
 <style scoped>
-.months { display: flex; align-items: flex-end; gap: 10px; overflow-x: auto; }
-.mo { display: grid; justify-items: center; gap: 6px; min-width: 46px; }
-.mo .bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
-.mo .bars i {
-  display: block; width: 14px; min-height: 2px;
-  border-radius: var(--shape-xs) var(--shape-xs) 0 0;
-  transition: height var(--motion-long) var(--ease-decelerate);
+.facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px 24px; margin: 12px 0 0;
 }
-.mo .bars i.in { background: var(--positive); }
-.mo .bars i.out { background: var(--primary); opacity: 0.55; }
-.mo span { font-size: 12px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+.facts dt { font-size: 12px; color: var(--on-surface-variant); letter-spacing: 0.04em; }
+.facts dd { margin: 2px 0 0; font-size: 18px; font-weight: 500; }
+.viz-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+  gap: 12px; margin-bottom: 32px;
+}
+.viz { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.viz h3 { margin: 0; }
+.viz.wide { grid-column: 1 / -1; }
+@media print {
+  .viz { break-inside: avoid; }
+}
 </style>

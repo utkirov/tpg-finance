@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ENTITY_NAME, auditExtras, auditTarget, auditWhen, describeAudit, type AuditEntry } from '#shared/journal'
+import type { Column } from '~/components/DataTable.vue'
 
 /** Журнал изменений объекта: кто, когда и что сделал. */
 const route = useRoute()
@@ -45,7 +46,16 @@ const rows = computed(() =>
     (!filter.entity || e.entity === filter.entity)
     && (!filter.userId || e.userId === filter.userId)))
 
-const stageOfOperation = (id: string) => state.value.ops.find(o => o.id === id)?.stageId ?? null
+// Этап операции по её номеру — словарём, а не поиском по всей ленте на каждой строке.
+const stageByOp = computed(() => new Map(state.value.ops.map(o => [o.id, o.stageId])))
+const stageOfOperation = (id: string) => stageByOp.value.get(id) ?? null
+
+const columns = computed<Column[]>(() => [
+  { key: 'at', label: t('Когда'), num: true },
+  { key: 'who', label: t('Кто') },
+  { key: 'what', label: t('Что сделано'), desc: true },
+  { key: 'entity', label: t('Раздел') },
+])
 // Суммы в журнале подчиняются переключателю USD / SUM, поэтому подпись берём оттуда же.
 const describe = (e: AuditEntry) => describeAudit(e, m)
 
@@ -66,22 +76,14 @@ function reset() {
 
 <template>
   <div v-if="object">
-    <div class="head-row">
-      <div>
-        <h1>{{ t('Журнал изменений') }}</h1>
-        <p class="sub">
-          {{ object.name }} · {{ t('кто, когда и что изменил. Записи не редактируются и не удаляются.') }}
-        </p>
-      </div>
-      <div class="acts no-print">
-        <NuxtLink class="btn" :to="`/objects/${object.id}`">
-          <Icon name="ph:arrow-left" />{{ t('К объекту') }}
-        </NuxtLink>
-        <button type="button" class="btn" @click="load">
-          <Icon name="ph:arrows-clockwise" />{{ t('Обновить') }}
-        </button>
-      </div>
-    </div>
+    <PageHead :title="t('Журнал изменений')" :sub="`${object.name} · ${t('кто, когда и что изменил. Записи не редактируются и не удаляются.')}`">
+      <NuxtLink class="btn" :to="`/objects/${object.id}`">
+        <Icon name="ph:arrow-left" />{{ t('К объекту') }}
+      </NuxtLink>
+      <button type="button" class="btn" @click="load">
+        <Icon name="ph:arrows-clockwise" />{{ t('Обновить') }}
+      </button>
+    </PageHead>
 
     <div class="filters no-print">
       <div class="f">
@@ -108,49 +110,33 @@ function reset() {
 
     <div v-else-if="loading" class="skel"><i /><i /><i /></div>
 
-    <div v-else-if="!rows.length" class="empty">
-      <Icon name="ph:clock-counter-clockwise" />
-      <p v-if="entries.length">{{ t('Под фильтр ничего не попало.') }}</p>
-      <p v-else>{{ t('Записей пока нет. Журнал наполняется сам при каждом действии.') }}</p>
-    </div>
+    <EmptyState
+      v-else-if="!rows.length"
+      icon="ph:clock-counter-clockwise"
+      :text="entries.length ? t('Под фильтр ничего не попало.') : t('Записей пока нет. Журнал наполняется сам при каждом действии.')"
+    />
 
-    <div v-else class="tw">
-      <table class="stack">
-        <thead>
-          <tr>
-            <th>{{ t('Когда') }}</th>
-            <th>{{ t('Кто') }}</th>
-            <th>{{ t('Что сделано') }}</th>
-            <th>{{ t('Раздел') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="e in rows" :key="e.id">
-            <td class="n" :data-label="t('Когда')">{{ auditWhen(e.at) }}</td>
-            <td :data-label="t('Кто')">{{ e.userName }}</td>
-            <td class="desc">
-              <b>{{ line(e) }}</b>
-              <small v-if="auditExtras(e).length">{{ auditExtras(e).join(' · ') }}</small>
-            </td>
-            <td :data-label="t('Раздел')">
-              <NuxtLink v-if="auditTarget(e, stageOfOperation)" :to="auditTarget(e, stageOfOperation)!">
-                {{ t(ENTITY_NAME[e.entity] ?? e.entity) }}
-              </NuxtLink>
-              <span v-else class="dim">{{ t(ENTITY_NAME[e.entity] ?? e.entity) }}</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <DataTable v-else :columns="columns" :rows="rows" :row-key="e => e.id">
+      <template #cell-at="{ row }">{{ auditWhen(row.at) }}</template>
+      <template #cell-who="{ row }">{{ row.userName }}</template>
+      <template #cell-what="{ row }">
+        <b>{{ line(row) }}</b>
+        <small v-if="auditExtras(row).length">{{ auditExtras(row).join(' · ') }}</small>
+      </template>
+      <template #cell-entity="{ row }">
+        <NuxtLink v-if="auditTarget(row, stageOfOperation)" :to="auditTarget(row, stageOfOperation)!">
+          {{ t(ENTITY_NAME[row.entity] ?? row.entity) }}
+        </NuxtLink>
+        <span v-else class="dim">{{ t(ENTITY_NAME[row.entity] ?? row.entity) }}</span>
+      </template>
+    </DataTable>
 
     <p v-if="rows.length" class="hint" style="margin-top: 10px">
       {{ t('Показаны последние {count} записей, новые сверху.', { count: rows.length }) }}
     </p>
   </div>
 
-  <div v-else class="empty">
-    <Icon name="ph:tray" />
-    <p>{{ t('Объект не найден или вам не открыт доступ.') }}</p>
+  <EmptyState v-else :text="t('Объект не найден или вам не открыт доступ.')">
     <NuxtLink to="/" class="btn"><Icon name="ph:arrow-left" />{{ t('К списку объектов') }}</NuxtLink>
-  </div>
+  </EmptyState>
 </template>

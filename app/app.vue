@@ -4,7 +4,7 @@ import type { Lang } from '#shared/i18n'
 import { currencyIcon, currencyLabel } from '#shared/calc'
 
 const route = useRoute()
-const { me, can, state, objectById, stageById } = useFinance()
+const { me, can, state, mustChange, objectById, stageById } = useFinance()
 const { t, lang, LANGS } = useT()
 const { shown, rate, CURRENCIES, converted } = useMoney()
 
@@ -17,10 +17,12 @@ useHead({
 })
 
 const links = computed(() => {
+  // С временным паролем разделы закрыты — показывать их незачем.
+  if (mustChange.value) return []
   const out = [{ to: '/', label: 'Объекты', icon: 'ph:buildings' }]
   if (can.value.seeContract) out.push({ to: '/clients', label: 'Клиенты', icon: 'ph:identification-card' })
   out.push({ to: '/obligations', label: 'Выплаты', icon: 'ph:clock-countdown' })
-  if (can.value.seeAllShares) out.push({ to: '/reports', label: 'Отчёты', icon: 'ph:chart-bar' })
+  if (can.value.seeAllShares) out.push({ to: '/reports', label: 'Статистика', icon: 'ph:chart-line-up' })
   if (can.value.seeAllShares) out.push({ to: '/people', label: 'Люди', icon: 'ph:users-three' })
   if (can.value.manage) out.push({ to: '/settings', label: 'Справочники', icon: 'ph:gear-six' })
   return out
@@ -145,7 +147,7 @@ const showCrumbs = computed(() => crumbs.value.length > 0 && !route.path.endsWit
           <NuxtLink v-if="can.manage" to="/settings">{{ t('изменить курс') }}</NuxtLink>
         </p>
 
-        <div v-if="state.mustChange" class="note g no-print" style="margin-top: 14px">
+        <div v-if="state.mustChange && route.path !== '/profile'" class="note g no-print" style="margin-top: 14px">
           <Icon name="ph:lock-key" />
           <div>
             <b>{{ t('Временный пароль') }}.</b>

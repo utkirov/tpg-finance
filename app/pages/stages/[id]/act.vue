@@ -23,27 +23,20 @@ const print = () => window.print()
 
 <template>
   <div v-if="stage && object && totals">
-    <div class="head-row no-print">
-      <div>
-        <h1>{{ t('Акты сверки') }}</h1>
-        <p class="sub">
-          {{ t('{object} · этап {number} · по одному листу на участника', { object: object.name, number: stage.number }) }}
-        </p>
-      </div>
-      <div class="acts">
-        <NuxtLink class="btn" :to="`/stages/${stage.id}`">
-          <Icon name="ph:arrow-left" />{{ t('К этапу') }}
-        </NuxtLink>
-        <button type="button" class="btn pri" @click="print">
-          <Icon name="ph:printer" />{{ t('Печать') }}
-        </button>
-      </div>
-    </div>
+    <PageHead
+      class="no-print"
+      :title="t('Акты сверки')"
+      :sub="t('{object} · этап {number} · по одному листу на участника', { object: object.name, number: stage.number })"
+    >
+      <NuxtLink class="btn" :to="`/stages/${stage.id}`">
+        <Icon name="ph:arrow-left" />{{ t('К этапу') }}
+      </NuxtLink>
+      <button type="button" class="btn pri" @click="print">
+        <Icon name="ph:printer" />{{ t('Печать') }}
+      </button>
+    </PageHead>
 
-    <div v-if="!acts.length" class="empty">
-      <Icon name="ph:file-text" />
-      <p>{{ t('Доли не настроены — печатать нечего.') }}</p>
-    </div>
+    <EmptyState v-if="!acts.length" icon="ph:file-text" :text="t('Доли не настроены — печатать нечего.')" />
 
     <article
       v-for="(act, i) in acts"
@@ -111,9 +104,7 @@ const print = () => window.print()
     </article>
   </div>
 
-  <div v-else class="empty">
-    <Icon name="ph:tray" />
-    <p>{{ t('Этап не найден.') }}</p>
+  <EmptyState v-else :text="t('Этап не найден.')">
     <NuxtLink to="/" class="btn"><Icon name="ph:arrow-left" />{{ t('К списку объектов') }}</NuxtLink>
-  </div>
+  </EmptyState>
 </template>

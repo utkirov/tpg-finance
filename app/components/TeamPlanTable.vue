@@ -151,13 +151,15 @@ const teamParts = (id: string) => {
       </button>
     </div>
 
-    <div v-if="!rows.length" class="empty">
-      <Icon name="ph:users-three" />
-      <p>{{ t('Команды не назначены. Добавьте команду и укажите, о какой сумме с ней договорились.') }}</p>
+    <EmptyState
+      v-if="!rows.length"
+      icon="ph:users-three"
+      :text="t('Команды не назначены. Добавьте команду и укажите, о какой сумме с ней договорились.')"
+    >
       <button v-if="editable && free.length" type="button" class="btn pri" @click="add">
         <Icon name="ph:plus" />{{ t('Добавить команду') }}
       </button>
-    </div>
+    </EmptyState>
 
     <div v-else class="tw">
       <table class="stack">
@@ -264,10 +266,7 @@ const teamParts = (id: string) => {
         }) }}
       </p>
 
-      <div v-if="!shareRows.length" class="empty">
-        <Icon name="ph:user" />
-        <p>{{ t('В команде никого нет — добавьте людей в справочниках.') }}</p>
-      </div>
+      <EmptyState v-if="!shareRows.length" icon="ph:user" :text="t('В команде никого нет — добавьте людей в справочниках.')" />
 
       <div v-for="row in shareRows" :key="row.personId" class="f">
         <label :for="`tp-p-${row.personId}`">
