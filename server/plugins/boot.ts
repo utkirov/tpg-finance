@@ -1,10 +1,12 @@
 import { pruneSessions } from '../utils/auth'
 import { runBackup } from '../utils/backup'
-import { useDb } from '../utils/db'
+import { IS_EPHEMERAL, useDb } from '../utils/db'
 
 /** База поднимается на старте, копия и уборка сессий — раз в сутки. */
 export default defineNitroPlugin(() => {
   useDb()
+  // Во временной папке копии бессмысленны: они исчезнут вместе с базой.
+  if (IS_EPHEMERAL) return
 
   const daily = () => {
     try {

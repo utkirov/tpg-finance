@@ -15,7 +15,12 @@ import { hashPassword } from './password'
  * схема и SQL совместимы; трогать при нескольких одновременных писателях.
  */
 
-export const DB_FILE = resolve(process.env.FINANCE_DB || '.data/finance.db')
+/**
+ * Где лежит база. На Vercel писать можно только во временную папку /tmp:
+ * там база живёт до холодного старта функции — это демо, не хранилище.
+ */
+export const IS_EPHEMERAL = !!process.env.VERCEL
+export const DB_FILE = resolve(process.env.FINANCE_DB || (IS_EPHEMERAL ? '/tmp/finance.db' : '.data/finance.db'))
 let handle: DatabaseSync | null = null
 
 export function useDb(): DatabaseSync {
@@ -805,7 +810,7 @@ function seed(db: DatabaseSync) {
 
   const now = new Date().toISOString()
   const user = db.prepare(
-    'INSERT INTO users (id, login, name, role, pass_hash, pass_salt, must_change, phone, person_id, active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, \'\', ?, 1, ?)',
+    'INSERT INTO users (id, login, name, role, pass_hash, pass_salt, must_change, phone, person_id, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, \'\', ?, 1, ?)',
   )
   const accounts: Array<[string, string, string, Role, string | null]> = [
     ['u-owner', 'owner', 'Владелец', 'owner', null],
@@ -815,8 +820,12 @@ function seed(db: DatabaseSync) {
     ['u-buh', 'buh', 'Бухгалтер', 'accountant', null],
   ]
   for (const [id, login, name, role, personId] of accounts) {
-    const { hash, salt } = hashPassword(login) // пароль по умолчанию совпадает с логином
-    user.run(id, login, name, role, hash, salt, personId, now)
+    // Пароль по умолчанию совпадает с логином и помечен временным.
+    // Для открытого демо его задают переменной DEMO_PASSWORD: общий на всех,
+    // без обязательной смены — база всё равно пересоздаётся с нуля.
+    const demo = process.env.DEMO_PASSWORD
+    const { hash, salt } = hashPassword(demo || login)
+    user.run(id, login, name, role, hash, salt, demo ? 0 : 1, personId, now)
   }
 
   // Клиент из CRM и команды, которые работают на объекте
