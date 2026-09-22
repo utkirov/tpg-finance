@@ -16,10 +16,11 @@ import { hashPassword } from './password'
  */
 
 /**
- * Где лежит база. На Vercel писать можно только во временную папку /tmp:
- * там база живёт до холодного старта функции — это демо, не хранилище.
+ * Где лежит база. В бессерверных функциях (Vercel, Netlify — это AWS Lambda)
+ * писать можно только во временную папку /tmp: там база живёт до холодного
+ * старта функции — это демо, не хранилище.
  */
-export const IS_EPHEMERAL = !!process.env.VERCEL
+export const IS_EPHEMERAL = !!(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME)
 export const DB_FILE = resolve(process.env.FINANCE_DB || (IS_EPHEMERAL ? '/tmp/finance.db' : '.data/finance.db'))
 let handle: DatabaseSync | null = null
 
