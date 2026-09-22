@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Касса объектов">
+  <rect width="512" height="512" fill="#12706A"/>
+  <rect x="160" y="168" width="192" height="176" rx="12" fill="#F3F5F4"/>
+  <rect x="160" y="168" width="192" height="40" rx="12" fill="#8A6712"/>
+  <rect x="188" y="248" width="136" height="14" rx="7" fill="#12706A"/>
+  <rect x="188" y="286" width="96" height="14" rx="7" fill="#5D6B73"/>
+</svg>
