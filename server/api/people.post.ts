@@ -22,6 +22,8 @@ export default defineEventHandler(async (event) => {
 
     if (same) {
       db.prepare('UPDATE people SET archived = 0 WHERE id = ?').run(same.id)
+      bumpSettingsRev()
+      audit('settings', 'main', 'person-restore', { id: same.id, name }, user.id)
       return { id: same.id }
     }
 
@@ -30,6 +32,7 @@ export default defineEventHandler(async (event) => {
       "INSERT INTO people (id, name, role, phone, team_id, is_sharer, archived) VALUES (?, ?, ?, '', ?, 0, 0)",
     ).run(id, name, role, teamId)
 
+    bumpSettingsRev()
     audit('settings', 'main', 'person', { name, role, teamId }, user.id)
     return { id }
   })

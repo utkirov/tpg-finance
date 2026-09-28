@@ -115,6 +115,12 @@ export interface Settings {
   scaleVersion: number
   /** Справочный курс для показа сумм: сколько сумов за доллар. */
   displayRate: number
+  /**
+   * Номер правки справочников. Сохранение приходит с номером, от которого
+   * начинали править: если с тех пор справочники поменяли (другая вкладка,
+   * человек заведён из формы операции), сервер откажет, а не затрёт чужое.
+   */
+  rev?: number
 }
 
 export interface Obj {
@@ -640,9 +646,15 @@ export function rateFor(scale: ScaleRow[], contractAmount: number): number {
 /** Проверки справочника. Пустой массив — можно сохранять. */
 export function settingsProblems(s: Pick<Settings, 'shares' | 'bonusScale'>): Note[] {
   const out: Note[] = []
-  const sum = (s.shares ?? []).reduce((a, x) => a + Number(x.percent), 0)
-  if (s.shares?.length && Math.abs(sum - 100) > 1e-9) {
-    out.push({ text: 'Сумма долей {sum} % — должно быть ровно 100.', params: { sum } })
+  // Проценты сравниваются в сотых долях целыми числами: 33.33 + 33.33 + 33.34
+  // в плавающей точке не равно 100, а в сотых — ровно 10 000.
+  const hundredths = (s.shares ?? []).map(x => Math.round(Number(x.percent) * 100))
+  if (s.shares?.some((x, i) => Math.abs(Number(x.percent) * 100 - hundredths[i]!) > 1e-6)) {
+    out.push({ text: 'Процент доли — не больше двух знаков после запятой.' })
+  }
+  const total = hundredths.reduce((a, x) => a + x, 0)
+  if (s.shares?.length && total !== 10_000) {
+    out.push({ text: 'Сумма долей {sum} % — должно быть ровно 100.', params: { sum: total / 100 } })
   }
   if (s.shares?.some(x => !x.personId)) out.push({ text: 'В долях есть строка без участника.' })
   if (s.bonusScale?.some(r => r.rate > MAX_BONUS_RATE)) {
@@ -662,29 +674,45 @@ export function settingsProblems(s: Pick<Settings, 'shares' | 'bonusScale'>): No
   return out
 }
 
-/** Предупреждения при вводе операции: не запрещают, но требуют подтверждения. */
+/**
+ * Предупреждения при вводе операции: не запрещают, но требуют подтверждения.
+ *
+ * revealIncome: false — для ролей, которым приход объекта не показывают (прораб).
+ * Предупреждения «нет прихода» и «освоено N %» считаются от прихода: отдав их,
+ * сервер позволил бы подбором суммы вычислить приход, не сохраняя ни одной записи.
+ *
+ * Обещанные авансы тоже занимают долю: аванс, оформленный обязательством,
+ * сравнивается с тем, что осталось после уже обещанного.
+ */
 export function operationWarnings(
   draft: { kind: Kind; amountBase: number; date: string; personId: string | null },
   stage: Stage,
   ops: Op[],
   totals: StageTotals,
+  { revealIncome = true, ignoreId = '' }: { revealIncome?: boolean; ignoreId?: string } = {},
 ): Note[] {
   const out: Note[] = []
+  const own = stageOps(ops, stage.id).filter(o => o.id !== ignoreId)
   if (draft.kind === 'adv') {
     const part = totals.parts.find(p => p.personId === draft.personId)
-    if (part && draft.amountBase > part.due) {
+    const promisedToHim = own.reduce(
+      (a, o) => a + (o.status === 'promised' && o.kind === 'adv' && o.personId === draft.personId ? base(o) : 0),
+      0,
+    )
+    const left = part ? part.due - promisedToHim : 0
+    if (part && draft.amountBase > left) {
       out.push({
         text: 'Аванс {amount} больше, чем причитается участнику ({due}).',
-        params: { amount: money(draft.amountBase), due: money(part.due) },
+        params: { amount: money(draft.amountBase), due: money(left) },
       })
     }
   }
-  if (draft.kind === 'exp' && totals.inc === 0) {
+  if (revealIncome && draft.kind === 'exp' && totals.inc === 0) {
     out.push({ text: 'У этапа ещё нет ни одного прихода.' })
   }
   if (
     draft.personId
-    && stageOps(ops, stage.id).some(
+    && own.some(
       o => o.status === 'ok' && o.date === draft.date && base(o) === draft.amountBase && o.personId === draft.personId,
     )
   ) {
@@ -694,7 +722,7 @@ export function operationWarnings(
     out.push({ text: 'Дата операции старше 30 дней.' })
   }
   const after = totals.inc > 0 ? (totals.exp + totals.adv + draft.amountBase) / totals.inc : 0
-  if (draft.kind !== 'in' && after > 0.8) {
+  if (revealIncome && draft.kind !== 'in' && after > 0.8) {
     out.push({ text: 'После этой записи освоено {percent} поступивших денег.', params: { percent: percent(after) } })
   }
   return out

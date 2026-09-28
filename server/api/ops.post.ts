@@ -109,7 +109,11 @@ export default defineEventHandler(async (event) => {
 
     const ops = opsOfStage(stage.id)
     const totals = calcStage(stage, ops, sharesOfVersion(obj.sharesVersion))
-    const warnings = status === 'ok' ? operationWarnings({ kind, amountBase, date, personId }, stage, ops, totals) : []
+    // Обязательство проверяется так же, как проведённая запись: иначе аванс сверх доли
+    // проходил бы молча — сначала «обещано», потом «выплачено».
+    const warnings = operationWarnings({ kind, amountBase, date, personId }, stage, ops, totals, {
+      revealIncome: ab.seeContract,
+    })
     if (warnings.length && !body.force) return { saved: false, warnings }
 
     const now = new Date().toISOString()

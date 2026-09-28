@@ -10,7 +10,7 @@ const err = useErr()
 
 /** Правится копия: до нажатия «Сохранить» ничего не улетает на сервер. */
 type DraftTeam = { id: string; name: string; composite: boolean; parts: string[] }
-type Draft = Pick<Settings, 'currency' | 'displayRate' | 'people' | 'categories' | 'shares' | 'bonusScale'>
+type Draft = Pick<Settings, 'currency' | 'displayRate' | 'people' | 'categories' | 'shares' | 'bonusScale' | 'rev'>
   & { teams: DraftTeam[] }
 const draft = ref<Draft>(snapshot())
 const message = reactive({ text: '', bad: false })
@@ -19,6 +19,7 @@ const busy = ref(false)
 function snapshot(): Draft {
   const s = settings.value
   return JSON.parse(JSON.stringify({
+    rev: s.rev ?? 0,
     currency: s.currency,
     displayRate: s.displayRate,
     people: s.people,

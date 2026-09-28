@@ -36,6 +36,12 @@ function fail(text: string) {
 
 async function logout() {
   await $fetch('/api/auth/logout', { method: 'POST' })
+  // Всё, что браузер успел закэшировать, после выхода не нужно следующему человеку.
+  try {
+    if ('caches' in window) await Promise.all((await caches.keys()).map(k => caches.delete(k)))
+  } catch {
+    // Кэш недоступен (приватный режим) — и хранить в нём нечего.
+  }
   await refresh()
   await navigateTo('/login')
 }

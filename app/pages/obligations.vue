@@ -2,11 +2,9 @@
 import { REMIND_DAYS, dmy, obligations, type Op } from '#shared/calc'
 
 /** Предстоящие выплаты: всё, о чём договорились, но деньги не выдали. */
-const { state, can, personName, categoryName, send } = useFinance()
-const { ask, notice } = useAsk()
+const { state, can, personName, categoryName } = useFinance()
 const { t } = useT()
 const { m } = useMoney()
-const err = useErr()
 
 const list = computed(() => obligations(state.value))
 const overdue = computed(() => list.value.filter(o => o.overdue))
@@ -42,21 +40,8 @@ function label(op: Op): string {
   return t(categoryName(op.categoryId)) + (op.personId ? ` · ${personName(op.personId)}` : '')
 }
 
-async function settle(op: Op) {
-  const go = await ask({
-    title: t('Выплата произведена'),
-    body: t('{label} — {amount}. Запись станет проведённой сегодняшней датой и уйдёт из обязательств.', {
-      label: label(op),
-      amount: m(op.amountBase),
-    }),
-  })
-  if (!go) return
-  try {
-    await send(`/api/ops/${op.id}/settle`, { method: 'POST', body: {} })
-  } catch (e) {
-    await notice(t('Не получилось'), err(e))
-  }
-}
+const settleOp = useSettle()
+const settle = (op: Op) => settleOp(op, label(op))
 </script>
 
 <template>

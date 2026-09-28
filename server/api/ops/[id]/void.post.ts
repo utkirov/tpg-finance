@@ -7,7 +7,7 @@ import { dmy, today, type Op } from '#shared/calc'
  * Закрытый этап возвращается на сверку.
  */
 export default defineEventHandler(async (event) => {
-  const user = requireAbility(event, 'manage')
+  const user = requireAbility(event, 'closeStages')
   const id = text(getRouterParam(event, 'id'), 'операция', { required: true })
   const body = await readBody<{ reason?: string }>(event)
   const reason = text(body?.reason, 'причина', { required: true })

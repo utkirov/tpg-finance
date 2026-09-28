@@ -469,6 +469,25 @@ export const UZ: Record<string, string> = {
   'Файл не получен': 'Fayl olinmadi',
   'Файл нужно привязать к объекту или операции': 'Faylni obyekt yoki amaliyotga bogʻlash kerak',
   'Сумма долей {sum} % — должно быть ровно 100.': 'Ulushlar yigʻindisi {sum} % — aniq 100 boʻlishi kerak.',
+  'Процент доли — не больше двух знаков после запятой.': 'Ulush foizi — verguldan keyin ikki xonadan koʻp emas.',
+  'Сначала смените временный пароль в профиле': 'Avval profilda vaqtinchalik parolni almashtiring',
+  'Новый пароль должен отличаться от текущего': 'Yangi parol joriy paroldan farq qilishi kerak',
+  'Это последний владелец — назначьте другого, прежде чем менять роль или отключать':
+    'Bu oxirgi egasi — rolini oʻzgartirish yoki oʻchirishdan oldin boshqasini tayinlang',
+  'Справочники пришли не полностью': 'Maʼlumotnomalar toʻliq kelmadi',
+  'Обновите страницу: справочники открыты в старой версии приложения':
+    'Sahifani yangilang: maʼlumotnomalar ilovaning eski versiyasida ochilgan',
+  'Справочники изменились в другом окне — обновите страницу и повторите правку':
+    'Maʼlumotnomalar boshqa oynada oʻzgardi — sahifani yangilab, tahrirni takrorlang',
+  'Этап на сверке — сумму не изменить, верните его в работу':
+    'Bosqich solishtiruvda — summani oʻzgartirib boʻlmaydi, uni ishga qaytaring',
+  'По этапу уже получено {amount} — сумма этапа не может быть меньше':
+    'Bosqich boʻyicha {amount} olingan — bosqich summasi bundan kam boʻlolmaydi',
+  'Сначала задайте команде план на объект': 'Avval jamoaga obyekt boʻyicha reja belgilang',
+  'Сначала задайте план команды, потом делите его на людей':
+    'Avval jamoa rejasini belgilang, keyin uni odamlarga taqsimlang',
+  'На этапы уже выделено {amount} — план не может быть меньше':
+    'Bosqichlarga {amount} ajratilgan — reja bundan kam boʻlolmaydi',
   'В долях есть строка без участника.': 'Ulushlarda ishtirokchisiz satr bor.',
   'Ставка бонуса выше {max} % не сохраняется.': '{max} % dan yuqori bonus stavkasi saqlanmaydi.',
   'В шкале есть диапазон с верхней границей ниже нижней.':

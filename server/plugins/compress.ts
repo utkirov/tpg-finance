@@ -24,7 +24,10 @@ export default defineNitroPlugin((nitro) => {
     if (text == null || Buffer.byteLength(text) < MIN_BYTES) return
 
     const packed = gzipSync(text)
-    setResponseHeader(event, 'content-type', typeof body === 'string' ? 'text/plain' : 'application/json')
+    // Тип, который выставил обработчик (text/csv у выгрузки), сохраняем как есть.
+    if (!getResponseHeader(event, 'content-type')) {
+      setResponseHeader(event, 'content-type', typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json')
+    }
     setResponseHeader(event, 'content-encoding', 'gzip')
     setResponseHeader(event, 'content-length', packed.length)
     setResponseHeader(event, 'vary', 'accept-encoding')

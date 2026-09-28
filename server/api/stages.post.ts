@@ -15,6 +15,16 @@ export default defineEventHandler(async (event) => {
 
     must(!stage || stage.status !== 'closed', 'Закрытый этап не редактируется')
 
+    if (stage && amount !== stage.amount) {
+      // На сверке сумма зафиксирована: от неё считаются доли, по которым уже сверяются.
+      must(stage.status !== 'check', 'Этап на сверке — сумму не изменить, верните его в работу')
+      // Меньше уже полученного от заказчика — дебиторка уходит в минус.
+      const received = opsOfStage(stage.id)
+        .filter(o => o.status === 'ok' && o.kind === 'in')
+        .reduce((a, o) => a + o.amountBase, 0)
+      must(amount >= received, 'По этапу уже получено {amount} — сумма этапа не может быть меньше', { amount: money(received) })
+    }
+
     const others = stagesOfObject(obj.id).reduce((a, s) => a + (s.id === id ? 0 : s.amount), 0)
     must(
       others + amount <= obj.contractAmount,
@@ -23,6 +33,7 @@ export default defineEventHandler(async (event) => {
 
     if (stage) {
       db.prepare('UPDATE stages SET name = ?, amount = ? WHERE id = ?').run(name, amount, stage.id)
+      // Доли считаются от суммы этапа: при выданных авансах правка меняет, сколько кому причитается.
       audit('stage', stage.id, 'update', { amount, was: stage.amount }, user.id)
       return { id: stage.id }
     }

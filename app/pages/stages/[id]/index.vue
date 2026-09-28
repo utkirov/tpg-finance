@@ -169,21 +169,8 @@ async function voidOp(op: Op) {
   }
 }
 
-async function settle(op: Op) {
-  const go = await ask({
-    title: t('Выплата произведена'),
-    body: t('{label} — {amount}. Запись станет проведённой сегодняшней датой и уйдёт из обязательств.', {
-      label: opLabel(op),
-      amount: m(op.amountBase),
-    }),
-  })
-  if (!go) return
-  try {
-    await send(`/api/ops/${op.id}/settle`, { method: 'POST', body: {} })
-  } catch (e) {
-    await notice(t('Не получилось'), err(e))
-  }
-}
+const settleOp = useSettle()
+const settle = (op: Op) => settleOp(op, opLabel(op))
 </script>
 
 <template>

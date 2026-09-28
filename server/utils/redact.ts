@@ -1,4 +1,5 @@
-import { EMPTY_TOTALS, calcStage, type AppState, type Obj, type Op, type Stage, type StageTotals } from '#shared/calc'
+import { calcStage, type AppState, type Obj, type Op, type Stage, type StageTotals } from '#shared/calc'
+import { narrowTotals, visibleOp } from '#shared/visibility'
 import { abilities } from '#shared/roles'
 import type { SessionUser } from './auth'
 
@@ -25,8 +26,9 @@ export function projectState(user: SessionUser): AppState {
     }))
 
   const visibleObjects = new Set(objects.map(o => o.id))
-  const rawStages = readStages().filter(s => visibleObjects.has(s.objectId))
-  const rawOps = readOps().filter(o => visibleObjects.has(o.objectId))
+  const scope = allowed ? [...visibleObjects] : undefined
+  const rawStages = readStages(scope)
+  const rawOps = readOps(scope)
 
   // Раскладываем операции по этапам один раз. Иначе на каждый этап шёл
   // проход по всей ленте, и на нескольких тысячах записей это уже заметно.
@@ -84,41 +86,5 @@ export function projectState(user: SessionUser): AppState {
       (a.objectId && visibleObjects.has(a.objectId)) || (a.operationId && opIds.has(a.operationId))),
     users: ab.manage ? readUsers() : [],
     totals,
-  }
-}
-
-/** Какие строки ленты роль вправе видеть. */
-function visibleOp(op: Op, user: SessionUser): boolean {
-  const ab = abilities(user.role)
-  if (ab.seeBonus && ab.seeAllShares) return true
-  if (op.isAuto) return false                       // строки бонуса
-  if (!ab.seeContract) return op.kind === 'exp'     // прораб: только расходы
-  if (op.kind === 'adv') return op.personId === user.personId // участник: свои авансы
-  return true
-}
-
-/**
- * Урезание показателей. Важно не «обнулить лишнее», а не отдать слагаемых,
- * по которым скрытое вычисляется вычитанием.
- */
-function narrowTotals(full: StageTotals, visible: Op[], user: SessionUser): StageTotals {
-  const ab = abilities(user.role)
-  if (ab.seeBonus && ab.seeAllShares) return full
-
-  // Прораб: касса объекта и сумма расходов, которые он и так видит построчно.
-  if (!ab.seeContract) {
-    const sum = (status: Op['status']) =>
-      visible.reduce((a, o) => a + (o.status === status ? (o.amountBase ?? o.amount) : 0), 0)
-    return { ...EMPTY_TOTALS, cash: full.cash, exp: sum('ok'), promised: sum('promised') }
-  }
-
-  // Участник: всё, кроме бонуса и чужих долей.
-  return {
-    ...full,
-    bonus: 0,
-    parts: ab.seeOwnShare ? full.parts.filter(p => p.personId === user.personId) : [],
-    dueTotal: ab.seeOwnShare
-      ? full.parts.filter(p => p.personId === user.personId).reduce((a, p) => a + p.due, 0)
-      : 0,
   }
 }

@@ -1,4 +1,5 @@
 import { KIND_NAME, OP_STATUS_NAME, dmy, type Kind } from '#shared/calc'
+import { toCsv } from '#shared/csv'
 import { projectState } from '../utils/redact'
 
 /**
@@ -59,7 +60,8 @@ export default defineEventHandler((event) => {
     ])
   }
 
-  const csv = '﻿' + table.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n')
+  // Сумма, курс и сумма в валюте объекта — числа; остальное текст и защищается от формул.
+  const csv = toCsv(table, [6, 8, 9])
   const label = stageId
     ? `${objName(rows[0]?.objectId ?? '')}-этап${stageNo(stageId)}`
     : objectId ? objName(objectId) : 'операции'

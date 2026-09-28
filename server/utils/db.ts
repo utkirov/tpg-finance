@@ -16,6 +16,8 @@ import { hashPassword } from './password'
  */
 
 export const DB_FILE = resolve(process.env.FINANCE_DB || '.data/finance.db')
+/** Вложения (чеки, договоры) — рядом с базой. */
+export const FILES_DIR = resolve(dirname(DB_FILE), 'files')
 let handle: DatabaseSync | null = null
 
 export function useDb(): DatabaseSync {
@@ -413,7 +415,17 @@ export function readSettings(): Settings {
     sharesVersion,
     bonusScale: scaleOfVersion(scaleVersion),
     scaleVersion,
+    rev: settingsRev(),
   }
+}
+
+export function settingsRev(): number {
+  return Number(meta('settings_rev') ?? 0)
+}
+
+/** Любая запись в справочники двигает номер правки — см. Settings.rev. */
+export function bumpSettingsRev() {
+  setMeta('settings_rev', String(settingsRev() + 1))
 }
 
 /* ---------- сущности ---------- */
@@ -565,12 +577,29 @@ export function readObjects(): Obj[] {
   return (useDb().prepare('SELECT * FROM objects ORDER BY created_at').all() as Row[]).map(toObj)
 }
 
-export function readStages(): Stage[] {
-  return (useDb().prepare('SELECT * FROM stages ORDER BY number').all() as Row[]).map(toStage)
+/**
+ * Этапы и операции. Список объектов сужает выборку прямо в SQL:
+ * пользователю с двумя объектами не нужно поднимать ленту всей фирмы.
+ */
+export function readStages(objectIds?: string[]): Stage[] {
+  const db = useDb()
+  const rows = objectIds
+    ? db.prepare('SELECT * FROM stages WHERE object_id IN (SELECT value FROM json_each(?)) ORDER BY number').all(JSON.stringify(objectIds))
+    : db.prepare('SELECT * FROM stages ORDER BY number').all()
+  return (rows as Row[]).map(toStage)
 }
 
-export function readOps(): Op[] {
-  return (useDb().prepare('SELECT * FROM operations ORDER BY date, created_at').all() as Row[]).map(toOp)
+export function readOps(objectIds?: string[]): Op[] {
+  const db = useDb()
+  const rows = objectIds
+    ? db.prepare('SELECT * FROM operations WHERE object_id IN (SELECT value FROM json_each(?)) ORDER BY date, created_at').all(JSON.stringify(objectIds))
+    : db.prepare('SELECT * FROM operations ORDER BY date, created_at').all()
+  return (rows as Row[]).map(toOp)
+}
+
+/** Удалить все сессии пользователя, кроме, может быть, одной — текущей. */
+export function dropSessions(userId: string, except = '') {
+  useDb().prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, except)
 }
 
 export function readAttachments(): Attachment[] {
