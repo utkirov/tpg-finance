@@ -8,7 +8,12 @@ const { me, can, state, objectById, stageById } = useFinance()
 const { t, lang, LANGS } = useT()
 const { shown, rate, CURRENCIES, converted } = useMoney()
 
-const bare = computed(() => route.path === '/login')
+// Маршрут роутера, а не useRoute(): тот в app.vue меняется только когда новая
+// страница отрисована внутри <NuxtPage>. После входа новая страница рисовалась
+// в «голом» шаблоне экрана входа, useRoute() так и оставался /login, и шапка
+// с навигацией не появлялась до перезагрузки.
+const router = useRouter()
+const bare = computed(() => router.currentRoute.value.path === '/login')
 
 // Заголовок вкладки тоже на языке интерфейса.
 useHead({
