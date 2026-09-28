@@ -73,10 +73,29 @@ export function inCurrency(state: AppState, currency: string): AppState {
     if (list) list.push(op)
     else byStage.set(op.stageId, [op])
   }
+  const rawByStage = new Map<string, Op[]>()
+  for (const op of state.ops) {
+    const list = rawByStage.get(op.stageId)
+    if (list) list.push(op)
+    else rawByStage.set(op.stageId, [op])
+  }
+  const rawStages = new Map(state.stages.map(s => [s.id, s]))
   const shownObjects = new Map(shown.objects.map(o => [o.id, o]))
   const totals: Record<string, StageTotals> = {}
   for (const stage of stages) {
-    totals[stage.id] = calcStage(stage, byStage.get(stage.id) ?? [], sharesFor(shown, shownObjects.get(stage.objectId) ?? null))
+    const shares = sharesFor(shown, shownObjects.get(stage.objectId) ?? null)
+    const t = calcStage(stage, byStage.get(stage.id) ?? [], shares)
+    if (book(stage.objectId) !== cur) {
+      // Тот же этап в валюте учёта: из него — долг и курсовая разница.
+      const b = calcStage(rawStages.get(stage.id)!, rawByStage.get(stage.id) ?? [], shares)
+      // Долг — будущие деньги по договору: пересчитываем остаток по курсу объекта.
+      // Иначе договор по курсу объекта минус приходы по своим курсам дали бы
+      // «долг» у полностью оплаченного этапа.
+      t.debt = byObject(stage.objectId, b.debt)
+      // Касса по строкам минус касса учёта по курсу объекта — это курсы, а не деньги.
+      t.fxDiff = t.cash - byObject(stage.objectId, b.cash)
+    }
+    totals[stage.id] = t
   }
   shown.totals = totals
   return shown

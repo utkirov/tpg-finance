@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ROLES_ENABLED, ROLE_NAME } from '#shared/roles'
+import { ROLES_ENABLED, roleName } from '#shared/roles'
 import type { Lang } from '#shared/i18n'
 
 const { me, state, refresh } = useFinance()
@@ -52,7 +52,7 @@ async function logout() {
     <div class="head-row">
       <div>
         <h1>{{ me?.name }}</h1>
-        <p class="sub"><template v-if="ROLES_ENABLED">{{ me ? t(ROLE_NAME[me.role]) : '' }} · </template>{{ t('логин {login}', { login: me?.login ?? '' }) }}</p>
+        <p class="sub"><template v-if="ROLES_ENABLED">{{ me ? t(roleName(me.role)) : '' }} · </template>{{ t('логин {login}', { login: me?.login ?? '' }) }}</p>
       </div>
       <button type="button" class="btn" @click="logout"><Icon name="ph:sign-out" />{{ t('Выйти') }}</button>
     </div>

@@ -77,6 +77,20 @@ test.skip('прораб (когда роли включены): только к�
   assert.deepEqual(t.parts, [])
 })
 
+test('дубль без человека и свободная касса', () => {
+  const rent = op('exp', 30_000, null, { categoryId: 'rent' })
+  const withRent = [...ops, rent]
+  const t = calcStage(stage, withRent, shares)
+  const dup = operationWarnings({ kind: 'exp', amountBase: 30_000, date: today(), personId: null, categoryId: 'rent' }, stage, withRent, t)
+  assert.ok(dup.some(x => /дубль/.test(x.text)), 'та же аренда той же датой — дубль')
+  const other = operationWarnings({ kind: 'exp', amountBase: 30_000, date: today(), personId: null, categoryId: 'mat' }, stage, withRent, t)
+  assert.ok(!other.some(x => /дубль/.test(x.text)), 'другая категория — не дубль')
+
+  // Касса 4 900, из них 800 — неполученный бонус: свободно 4 100.
+  const big = operationWarnings({ kind: 'adv', amountBase: 450_000, date: today(), personId: 'ilhom' }, stage, withRent, t)
+  assert.ok(big.some(x => /Свободно в кассе/.test(x.text)))
+})
+
 test('CSV: текст, похожий на формулу, остаётся текстом', () => {
   assert.equal(csvCell('=HYPERLINK("http://x")'), `"'=HYPERLINK(""http://x"")"`)
   for (const s of ['+1', '-2+3', '@SUM(A1)', '\t=1']) assert.ok(csvCell(s).startsWith(`"'`), s)

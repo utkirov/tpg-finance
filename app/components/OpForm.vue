@@ -2,11 +2,12 @@
 import {
   CURRENCIES, KIND_NAME, categoriesFor, categoryGroups, currencyIcon, currencyLabel, dmy, money,
   parseMoney, parseRate, toBase, today,
-  type Kind, type Note, type Obj, type Stage,
+  type Kind, type Note, type Obj, type Op, type Stage,
 } from '#shared/calc'
 import { teamMembers } from '#shared/plan'
 
-const props = defineProps<{ open: boolean; stage: Stage; object: Obj }>()
+/** edit — «Исправить»: форма заполняется этой записью, при сохранении она сторнируется и заменяется новой. */
+const props = defineProps<{ open: boolean; stage: Stage; object: Obj; edit?: Op | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 const { state, settings, can, send, refresh } = useFinance()
@@ -32,6 +33,10 @@ const form = reactive({
   /** Курс доллара на дату операции: сумов за 1 USD. */
   fx: '',
 })
+/** Ключ этого открытия формы: повторная отправка не создаст вторую запись. */
+const clientKey = ref('')
+/** Курс поправили руками — больше не подставляем курс ЦБ при смене даты. */
+const fxTouched = ref(false)
 const files = ref<File[]>([])
 const error = ref('')
 const busy = ref(false)
@@ -43,6 +48,34 @@ watch(
   () => props.open,
   async (isOpen) => {
     if (!isOpen) return
+    clientKey.value = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+    fxTouched.value = false
+    files.value = []
+    error.value = ''
+    const e = props.edit
+    if (e) {
+      // Исправление: всё как было записано, в валюте операции и с её курсом.
+      const category = settings.value.categories.find(c => c.id === e.categoryId)
+      Object.assign(form, {
+        amount: money(e.amount),
+        kind: e.kind === 'adv' && e.offObject ? 'exp' : e.kind,
+        personId: e.personId,
+        categoryId: e.categoryId,
+        teamId: e.teamId,
+        group: category?.group ?? null,
+        direct: !(e.kind === 'adv' && e.offObject),
+        date: e.date,
+        note: e.note,
+        currency: e.currency,
+        rate: e.currency.toUpperCase() === props.object.currency.toUpperCase() ? '' : fmtRate(e.rate),
+        fx: e.fx ? fmtRate(e.fx) : defaultFx(),
+      })
+      fxTouched.value = true
+      // Дочерние watch сбрасывают несовместимые поля — возвращаем записанные.
+      await nextTick()
+      Object.assign(form, { personId: e.personId, categoryId: e.categoryId, teamId: e.teamId })
+      return
+    }
     // По умолчанию расход: это самая частая запись с телефона.
     Object.assign(form, {
       amount: '',
@@ -58,8 +91,7 @@ watch(
       rate: '',
       fx: defaultFx(),
     })
-    files.value = []
-    error.value = ''
+    loadCbu()
     await nextTick()
     amountInput.value?.focus()
   },
@@ -183,33 +215,39 @@ const usdUzs = computed(() => {
 })
 
 interface RateInfo { date: string | null; rates: Record<string, number>; stale: boolean }
-const usdInfo = ref<RateInfo | null>(null)
-const usdToday = computed(() => {
-  const v = usdInfo.value?.rates?.UZS
-  return Number.isFinite(v) && (v as number) > 0 ? Math.round(v as number) : null
+
+/** Официальный курс ЦБ РУз на дату операции — операции вносят и задним числом. */
+const cbu = ref<{ date: string; rate: number | null } | null>(null)
+
+async function loadCbu() {
+  const date = form.date || today()
+  try {
+    cbu.value = await $fetch<{ date: string; rate: number | null }>('/api/rates/usd', { params: { date } })
+  } catch {
+    cbu.value = { date, rate: null }
+  }
+  if (!fxTouched.value && cbu.value?.rate) form.fx = fmtRate(Math.round(cbu.value.rate * 100) / 100)
+}
+
+// Сменили дату — подтягиваем курс ЦБ на неё, если курс не правили руками.
+watch(() => form.date, () => {
+  if (props.open) loadCbu()
 })
 
+/** Пока курс ЦБ не пришёл: курс объекта, иначе справочный. */
 function defaultFx(): string {
-  const v = props.object.rate > 0 ? props.object.rate : usdToday.value ?? Number(settings.value.displayRate) ?? 0
+  const v = props.object.rate > 0 ? props.object.rate : Number(settings.value.displayRate) || 0
   return v ? fmtRate(v) : ''
 }
 
-onMounted(async () => {
-  try {
-    usdInfo.value = await $fetch<RateInfo>('/api/rates', { params: { base: 'USD' } })
-  } catch {
-    usdInfo.value = { date: null, rates: {}, stale: true }
-  }
-  if (!form.fx) form.fx = defaultFx()
-})
-
 const fxCaption = computed(() => {
   const parts: string[] = []
-  if (props.object.rate > 0) parts.push(t('курс объекта {rate}', { rate: props.object.rate.toLocaleString('ru-RU') }))
-  if (usdToday.value && usdInfo.value?.date) {
-    parts.push(t('биржевой на {date}: {rate}', { date: dmy(usdInfo.value.date), rate: usdToday.value.toLocaleString('ru-RU') }))
+  if (cbu.value?.rate) {
+    parts.push(t('ЦБ на {date}: {rate}', { date: dmy(cbu.value.date), rate: cbu.value.rate.toLocaleString('ru-RU') }))
   }
-  return parts.length ? parts.join(' · ') : t('Курс не загрузился — введите вручную.')
+  if (props.object.rate > 0) parts.push(t('курс объекта {rate}', { rate: props.object.rate.toLocaleString('ru-RU') }))
+  if (!cbu.value?.rate) parts.push(t('Курс ЦБ не загрузился — проверьте или введите вручную.'))
+  return parts.join(' · ')
 })
 
 /* ---------- курс к валюте объекта: для других валют (не сумы и не доллары) ---------- */
@@ -362,6 +400,8 @@ async function save(force = false) {
         teamId: form.direct ? form.teamId : null,
         note: form.note,
         force,
+        clientKey: clientKey.value,
+        replaces: props.edit?.id,
       },
     })
 
@@ -392,7 +432,15 @@ async function save(force = false) {
 </script>
 
 <template>
-  <AppDialog :open="open" :title="t(KIND_NAME[form.kind])" :icon="KIND_ICON[form.kind]" @close="emit('close')">
+  <AppDialog
+    :open="open"
+    :title="edit ? t('Исправить: {kind}', { kind: t(KIND_NAME[form.kind]) }) : t(KIND_NAME[form.kind])"
+    :icon="edit ? 'ph:pencil-simple' : KIND_ICON[form.kind]"
+    @close="emit('close')"
+  >
+    <p v-if="edit" class="hint" style="margin-top: 0">
+      {{ t('Прежняя запись будет сторнирована, вместо неё сохранится эта. Обе останутся в истории.') }}
+    </p>
     <div class="f">
       <label for="op-amount">{{ t('Сумма') }}</label>
       <div class="pick">
@@ -429,6 +477,7 @@ async function save(force = false) {
         id="op-fx"
         v-model="form.fx"
         v-mask="'rate'"
+        @input="fxTouched = true"
         class="num"
         inputmode="decimal"
         autocomplete="off"

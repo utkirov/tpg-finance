@@ -86,6 +86,7 @@ test('прогноз доли учитывает и факт, и остаток 
   assert.equal(f.spent, 140_000, 'потрачено 1 400')
   // осталось по планам: арх 1 800 + констр 1 800 + диз 5 000 = 8 600
   assert.equal(f.planLeft, 860_000)
+  assert.equal(f.bonusAhead, 0, 'у объекта без ставки бонуса впереди нет')
   assert.equal(f.net, 1_800_000 - 140_000 - 860_000, 'прогнозная чистая доля 8 000')
   assert.equal(f.net, 800_000)
 
@@ -93,6 +94,15 @@ test('прогноз доли учитывает и факт, и остаток 
   assert.equal(ilhom.amount, 600_000, '75 % от 8 000')
   assert.equal(ilhom.paid, 160_000)
   assert.equal(ilhom.due, 440_000)
+
+  // Со ставкой 10 %: неполученный бонус 800 с прихода 8 000 и будущий 10 % с неоплаченных 10 000.
+  const withBonus = objectForecast(
+    { ...state, ops: [...state.ops, op('exp', 80_000, { isAuto: true, categoryId: 'bonus' })] },
+    { ...obj, bonusRate: 10 },
+    shares,
+  )
+  assert.equal(withBonus.bonusAhead, 80_000 + 100_000, 'бонус впереди 1 800 = 10 % от всего договора')
+  assert.equal(withBonus.net, 800_000 - 180_000)
   assert.equal(f.parts.reduce((a, p) => a + p.amount, 0), f.net, 'доли сходятся к чистой доле')
 })
 

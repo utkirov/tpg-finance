@@ -1,9 +1,10 @@
 import {
-  BONUS_CAT, bonusOf, calcStage, categoriesFor, money, operationWarnings, toBase,
+  BONUS_CAT, bonusOf, calcStage, categoriesFor, dmy, money, operationWarnings, toBase,
   type Kind, type Note, type Op,
 } from '#shared/calc'
 import { abilities } from '#shared/roles'
 import { teamMembers } from '#shared/plan'
+import { voidOperation } from '../utils/voiding'
 
 /**
  * Новая операция: приход, расход объекта или аванс участнику.
@@ -18,8 +19,14 @@ import { teamMembers } from '#shared/plan'
  * она пересчитывается при показе в другой валюте. Для пары USD ↔ UZS из него же
  * берётся курс к валюте объекта.
  *
- * Предупреждения (аванс больше доли, дубль, дата задним числом, освоение)
- * возвращаются клиенту без записи; повтор с force: true сохраняет.
+ * Предупреждения (аванс больше доли, дубль, дата задним числом, освоение,
+ * неполученный бонус в кассе) возвращаются клиенту без записи; повтор с force: true сохраняет.
+ *
+ * clientKey — ключ открытия формы: повторная отправка той же формы (двойное
+ * нажатие, повтор после обрыва связи) возвращает уже созданную запись.
+ *
+ * replaces — «Исправить»: старая запись сторнируется и новая ложится
+ * одной транзакцией. Право то же, что у сторно.
  */
 export default defineEventHandler(async (event) => {
   const user = requireAbility(event, 'write')
@@ -39,6 +46,8 @@ export default defineEventHandler(async (event) => {
     offObject?: boolean
     note?: string
     force?: boolean
+    clientKey?: string
+    replaces?: string
   }>(event)
 
   const kind = oneOf(body.kind, ['in', 'exp', 'adv'] as const, 'тип операции')
@@ -48,8 +57,18 @@ export default defineEventHandler(async (event) => {
   const note = text(body.note, 'комментарий')
   const fx = Number(body.fx)
   must(Number.isFinite(fx) && fx > 0 && fx < 1e9, 'Укажите курс доллара на дату операции')
+  const clientKey = body.clientKey ? text(body.clientKey, 'ключ формы', { max: 64 }) : null
+  const replacesId = body.replaces ? text(body.replaces, 'исправляемая запись', { max: 64 }) : null
+  if (replacesId) requireAbility(event, 'closeStages')
 
   return tx(() => {
+    // Та же форма пришла второй раз — запись уже есть, вторую не создаём.
+    if (clientKey) {
+      const row = useDb().prepare('SELECT id FROM operations WHERE client_key = ?').get(clientKey) as { id: string } | undefined
+      const existing = row ? getOp(row.id) : null
+      if (existing) return { saved: true, repeated: true, op: existing, bonus: null, hint: null, warnings: [] as Note[] }
+    }
+
     const stage = getStage(text(body.stageId, 'этап', { required: true })) ?? notFound('Этап')
     const obj = getObject(stage.objectId) ?? notFound('Объект')
     requireObject(event, obj.id)
@@ -115,14 +134,23 @@ export default defineEventHandler(async (event) => {
     }
     if (personId) must(settings.people.some(p => p.id === personId), 'Человек не найден в справочнике')
 
-    const ops = opsOfStage(stage.id)
+    // Исправление: старая запись того же этапа, ещё живая и не строка бонуса.
+    const replaced = replacesId ? (getOp(replacesId) ?? notFound('Операция')) : null
+    if (replaced) {
+      must(replaced.stageId === stage.id, 'Исправленная запись должна остаться в том же этапе')
+      must(replaced.status === 'ok', 'Операция уже отменена')
+      must(!replaced.isAuto, 'Строка бонуса отдельно не исправляется — исправьте породивший её приход')
+    }
+
+    // Проверки считаются так, будто исправляемой записи (и её бонуса) уже нет.
+    const ops = opsOfStage(stage.id).filter(o => !replaced || (o.id !== replaced.id && o.parentId !== replaced.id))
     const totals = calcStage(stage, ops, sharesOfVersion(obj.sharesVersion))
-    // Обязательство проверяется так же, как проведённая запись: иначе аванс сверх доли
-    // проходил бы молча — сначала «обещано», потом «выплачено».
-    const warnings = operationWarnings({ kind, amountBase, date, personId }, stage, ops, totals, {
+    const warnings = operationWarnings({ kind, amountBase, date, personId, categoryId }, stage, ops, totals, {
       revealIncome: ab.seeContract,
     })
     if (warnings.length && !body.force) return { saved: false, warnings }
+
+    if (replaced) voidOperation(replaced, `исправление: заменена записью от ${dmy(date)}`, user.id)
 
     const now = new Date().toISOString()
     const op: Op = {
@@ -150,8 +178,10 @@ export default defineEventHandler(async (event) => {
       createdAt: now,
       createdBy: user.id,
       reason: '',
+      clientKey,
     }
     insertOp(op)
+    if (replaced) audit('operation', op.id, 'replace', { was: replaced.id }, user.id)
     audit('operation', op.id, 'create', { kind, amount, currency, fx, date, status: 'ok' }, user.id)
 
     // Бонус: процент с каждого прихода, а не с суммы договора.
@@ -182,6 +212,7 @@ export default defineEventHandler(async (event) => {
             received: false,
             receivedAt: null,
             parentId: op.id,
+            clientKey: null,
             createdAt: new Date().toISOString(),
           }
           insertOp(bonus)

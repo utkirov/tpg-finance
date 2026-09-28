@@ -1,5 +1,6 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
+import { gzipSync } from 'node:zlib'
 import { DB_FILE, FILES_DIR, useDb } from './db'
 
 /**
@@ -50,4 +51,43 @@ function prune() {
     const path = join(BACKUP_DIR, name)
     if (statSync(path).mtimeMs < edge) unlinkSync(path)
   }
+}
+
+/* ---------- копия вне сервера: Telegram ---------- */
+
+/**
+ * Копия на том же сервере не спасает, если пропал сам сервер. Если заданы
+ * FINANCE_TG_TOKEN (токен бота от @BotFather) и FINANCE_TG_CHAT (id чата или
+ * канала, куда бот добавлен), свежая копия базы сжимается и уходит туда
+ * документом. Лимит Telegram для ботов — 50 МБ; больше — не шлём и пишем в лог.
+ *
+ * Вложения (фото чеков) в Telegram не отправляются: их много и они большие.
+ * Для них копия — каталог backups/files, его стоит держать на другом диске.
+ */
+const TG_LIMIT = 49 * 1024 * 1024
+
+export function offsiteConfigured(): boolean {
+  return !!(process.env.FINANCE_TG_TOKEN && process.env.FINANCE_TG_CHAT)
+}
+
+export async function sendOffsite(path: string): Promise<'sent' | 'skipped' | 'too-big'> {
+  const token = process.env.FINANCE_TG_TOKEN
+  const chat = process.env.FINANCE_TG_CHAT
+  if (!token || !chat) return 'skipped'
+
+  const packed = gzipSync(readFileSync(path))
+  if (packed.length > TG_LIMIT) return 'too-big'
+
+  const form = new FormData()
+  form.append('chat_id', chat)
+  form.append('caption', `Касса объектов: копия базы ${basename(path)}`)
+  form.append('document', new Blob([packed], { type: 'application/gzip' }), `${basename(path)}.gz`)
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(60_000),
+  })
+  if (!res.ok) throw new Error(`Telegram ответил ${res.status}`)
+  return 'sent'
 }

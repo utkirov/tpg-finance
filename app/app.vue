@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ROLES_ENABLED, ROLE_NAME } from '#shared/roles'
+import { ROLES_ENABLED, roleName } from '#shared/roles'
 import type { Lang } from '#shared/i18n'
 import { currencyIcon, currencyLabel } from '#shared/calc'
 
@@ -126,7 +126,7 @@ const showCrumbs = computed(() => crumbs.value.length > 0 && !route.path.endsWit
               <Icon name="ph:user-circle" />
               <span>
                 <b>{{ me?.name }}</b>
-                <template v-if="ROLES_ENABLED">{{ me ? t(ROLE_NAME[me.role]) : '' }}</template>
+                <template v-if="ROLES_ENABLED">{{ me ? t(roleName(me.role)) : '' }}</template>
               </span>
             </NuxtLink>
           </div>

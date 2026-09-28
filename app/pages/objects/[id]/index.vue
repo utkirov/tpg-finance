@@ -3,7 +3,7 @@ import {
   currencyLabel, formatMoney, objectTotals, otherCurrency, sharesFor, toObjectCurrency, totalsOf,
 } from '#shared/calc'
 import { objectForecast, stageProgress } from '#shared/plan'
-import { ROLES_ENABLED } from '#shared/roles'
+import { ROLE_MODE } from '#shared/roles'
 
 const route = useRoute()
 const router = useRouter()
@@ -46,7 +46,11 @@ const kpis = computed(() => {
     label: t('Касса объекта'),
     icon: 'ph:wallet',
     value: m(sums.cash),
-    sub: t('приходы − расходы − авансы'),
+    sub: [
+      t('приходы − расходы − авансы'),
+      ...(sums.bonusPending ? [t('свободно {free} без неполученного бонуса', { free: m(sums.cash - sums.bonusPending) })] : []),
+      ...(sums.fxDiff ? [t('в т. ч. курсовая разница {amount}', { amount: m(sums.fxDiff) })] : []),
+    ].join(' · '),
     tone: sums.cash < 0 ? ('bad' as const) : ('acc' as const),
   })
   if (can.value.seeContract) out.push({ label: t('Дебиторка'), icon: 'ph:hand-coins', value: m(sums.debt), sub: t('ещё не получено') })
@@ -252,16 +256,17 @@ function toggle(id: string) {
       </div>
 
       <p v-if="forecast" class="hint" style="margin-top: 12px">
-        {{ t('По этапам: слева получено, справа осталось. Прогноз по договору — за вычетом расходов ({spent}) и остатка планов команд ({plan}).', {
+        {{ t('По этапам — от полученных денег: слева выдано, справа осталось. Прогноз — когда заказчик заплатит весь договор: за вычетом расходов ({spent}), остатка планов команд ({plan}) и бонуса впереди ({bonus}).', {
           spent: m(forecast.spent),
           plan: m(forecast.planLeft),
+          bonus: m(forecast.bonusAhead),
         }) }}
       </p>
     </section>
 
     <TeamPlanTable v-if="can.seeContract" :object-id="object.id" :editable="can.manage" />
 
-    <section v-if="ROLES_ENABLED && can.manage" class="sect no-print">
+    <section v-if="ROLE_MODE === 'full' && can.manage" class="sect no-print">
       <h2>{{ t('Кто допущен к объекту') }}</h2>
       <div class="panel">
         <p class="hint" style="margin-bottom: 10px">

@@ -6,7 +6,7 @@ import {
   toObjectCurrency,
   type Category, type Op, type Settings, type Stage,
 } from '../shared/calc.ts'
-import { ROLES_ENABLED, abilities } from '../shared/roles.ts'
+import { ROLE_MODE, abilities } from '../shared/roles.ts'
 
 /** Контрольный пример из раздела 14 ТЗ: «Ресторан, Конибодом», договор 18 000, ставка 10 %. */
 
@@ -137,6 +137,18 @@ test('этап не закрывается при расхождении', () =>
     ...splitShares(1_800_000, shares).map(p => op('adv', p.amount, p.personId)),
   ]
   assert.deepEqual(closingProblems(stage, calcStage(stage, paid, shares)), [], 'всё сошлось — можно закрывать')
+
+  // Касса ноль, но Илхому переплатили 100 за счёт Улугбека.
+  const [a, b, c] = splitShares(1_800_000, shares)
+  const uneven = [
+    op('in', 1_800_000),
+    op('adv', a!.amount + 10_000, 'ilhom'), op('adv', b!.amount - 10_000, 'ulugbek'), op('adv', c!.amount, 'dilshod'),
+  ]
+  const problems = closingProblems(stage, calcStage(stage, uneven, shares), id => id.toUpperCase())
+  assert.equal(problems.length, 2)
+  assert.ok(problems.every(p => p.soft), 'перекос — мягкое условие')
+  assert.deepEqual(problems.map(p => p.text), ['{name}: переплачено {amount}.', '{name}: недоплачено {amount}.'])
+  assert.equal(problems[0]!.params!.name, 'ILHOM', 'имя берётся из переданной функции')
 })
 
 test('справочники: доли 100 %, ставка до 40 %, шкала без разрывов', () => {
@@ -170,10 +182,17 @@ test('отчёт по категориям считает долю бонуса 
   assert.equal(report.rows[0]!.count, 2)
 })
 
-test('роли выключены: у всех права владельца', () => {
-  assert.equal(ROLES_ENABLED, false)
-  for (const role of ['owner', 'member', 'foreman', 'accountant'] as const) {
-    assert.deepEqual(abilities(role), abilities('owner'), role)
+test('две роли: администратор всё, оператор видит всё и вносит операции', () => {
+  assert.equal(ROLE_MODE, 'simple')
+  const admin = abilities('owner')
+  assert.ok(admin.manage && admin.closeStages)
+  for (const role of ['member', 'foreman', 'accountant'] as const) {
+    const op = abilities(role)
+    assert.equal(op.write, true, `${role} вносит операции`)
+    assert.deepEqual(op.kinds, ['in', 'exp', 'adv'])
+    assert.equal(op.seeBonus && op.seeAllShares && op.allObjects, true, `${role} видит всё`)
+    assert.equal(op.manage, false, `${role} не настраивает`)
+    assert.equal(op.closeStages, false, `${role} не сторнирует и не закрывает`)
   }
 })
 

@@ -229,7 +229,12 @@ export interface Forecast {
   spent: number
   /** Остаток планов, который ещё предстоит потратить. */
   planLeft: number
-  /** Договор минус факт минус остаток плана. */
+  /**
+   * Бонус впереди: начисленный, но не полученный, плюс будущий — ставка
+   * объекта с той части договора, которую заказчик ещё не заплатил.
+   */
+  bonusAhead: number
+  /** Договор минус факт минус остаток плана минус бонус впереди. */
   net: number
   parts: ForecastPart[]
 }
@@ -239,19 +244,31 @@ export interface Forecast {
  * Считается по факту расходов плюс неизрасходованный остаток планов —
  * это ответ на вопрос «сколько выйдет в итоге».
  */
+/**
+ * Прогноз по договору: сколько каждый участник получит, когда заказчик
+ * заплатит всё. База та же, что у этапа (деньги минус расходы), только
+ * вместо полученного — весь договор, а вместо проведённых расходов —
+ * проведённые плюс ещё предстоящие: остаток планов команд и бонус впереди.
+ */
 export function objectForecast(state: PlanState, obj: Obj, shares: Share[]): Forecast {
   const stageIds = new Set(stagesOf(state.stages, obj.id).map(s => s.id))
 
   let spent = 0
+  let received = 0
+  let bonusPending = 0
   const paid = new Map<string, number>()
   for (const op of state.ops) {
-    if (!stageIds.has(op.stageId) || !counts(op)) continue
+    if (!stageIds.has(op.stageId) || op.status !== 'ok') continue
+    if (op.isAuto && !op.received) { bonusPending += base(op); continue }
+    if (op.kind === 'in') received += base(op)
     if (op.kind === 'exp') spent += base(op)
     if (op.kind === 'adv' && op.personId) paid.set(op.personId, (paid.get(op.personId) ?? 0) + base(op))
   }
 
   const planLeft = objectTeams(state, obj.id).reduce((a, r) => a + r.left, 0)
-  const net = obj.contractAmount - spent - planLeft
+  const future = Math.round((Math.max(0, obj.contractAmount - received) * (Number(obj.bonusRate) || 0)) / 100)
+  const bonusAhead = bonusPending + future
+  const net = obj.contractAmount - spent - planLeft - bonusAhead
 
   const parts = splitShares(net, shares).map(p => ({
     ...p,
@@ -259,7 +276,7 @@ export function objectForecast(state: PlanState, obj: Obj, shares: Share[]): For
     due: p.amount - (paid.get(p.personId) ?? 0),
   }))
 
-  return { contract: obj.contractAmount, spent, planLeft, net, parts }
+  return { contract: obj.contractAmount, spent, planLeft, bonusAhead, net, parts }
 }
 
 export interface StageProgress {

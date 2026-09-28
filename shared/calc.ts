@@ -192,6 +192,11 @@ export interface Op {
   createdAt: string
   createdBy: string | null
   reason: string
+  /**
+   * Ключ формы: одно открытие формы — одна запись. Повторная отправка
+   * (двойное нажатие, повтор после обрыва связи) возвращает уже созданную.
+   */
+  clientKey?: string | null
 }
 
 export interface Attachment {
@@ -255,6 +260,12 @@ export interface StageTotals {
   cash: number
   debt: number
   usage: number
+  /**
+   * Курсовая разница — только при показе в другой валюте. Касса считается
+   * из строк, каждая по своему курсу; разница с кассой учёта, пересчитанной
+   * по курсу объекта, — это курсы, а не деньги. В валюте учёта всегда 0.
+   */
+  fxDiff?: number
   parts: SharePart[]
   dueTotal: number
 }
@@ -458,7 +469,7 @@ export function sharesFor(state: Pick<AppState, 'settings' | 'sharesByVersion'>,
 
 export const EMPTY_TOTALS: StageTotals = {
   inc: 0, exp: 0, adv: 0, bonus: 0, bonusPending: 0, net: 0, cash: 0, debt: 0,
-  usage: 0, parts: [], dueTotal: 0,
+  usage: 0, fxDiff: 0, parts: [], dueTotal: 0,
 }
 
 /** Показатели этапа — из того, что прислал сервер с учётом роли. */
@@ -469,9 +480,10 @@ export function totalsOf(state: Pick<AppState, 'totals'>, stageId: string): Stag
 /** Сводка по объекту — сумма его этапов, уже урезанных по роли. */
 export function objectTotals(state: Pick<AppState, 'totals' | 'stages'>, objectId: string) {
   const list = stagesOf(state.stages, objectId)
-  const t = { inc: 0, exp: 0, adv: 0, cash: 0, debt: 0, planned: 0, bonus: 0, bonusPending: 0, usage: 0, stages: list }
+  const t = { inc: 0, exp: 0, adv: 0, cash: 0, debt: 0, planned: 0, bonus: 0, bonusPending: 0, fxDiff: 0, usage: 0, stages: list }
   for (const st of list) {
     const c = totalsOf(state, st.id)
+    t.fxDiff += c.fxDiff ?? 0
     t.inc += c.inc
     t.exp += c.exp
     t.adv += c.adv
@@ -506,8 +518,20 @@ export function calcObject(obj: Obj, stages: Stage[], ops: Op[], shares: Share[]
  * при этом заказчик рассчитался и касса этапа пуста.
  * Возвращает список расхождений — пустой, если этап можно закрыть.
  */
-export function closingProblems(stage: Stage, totals: StageTotals): Note[] {
-  const out: Note[] = []
+/**
+ * Почему этап не закрывается.
+ *
+ * Жёсткие условия: заказчик рассчитался, бонус получен, касса ноль.
+ * Мягкое — у каждого участника «к доплате» ноль: касса ноль значит, что ноль
+ * в сумме, а одному могли переплатить за счёт другого. Мягкое закрытие
+ * разрешено только явно, с причиной (soft: true в записи).
+ */
+export function closingProblems(
+  stage: Stage,
+  totals: StageTotals,
+  nameOf: (personId: string) => string = id => id,
+): Array<Note & { soft?: boolean }> {
+  const out: Array<Note & { soft?: boolean }> = []
   if (totals.debt !== 0) out.push({ text: 'Заказчик ещё должен {amount}.', params: { amount: money(totals.debt) } })
   if (totals.bonusPending !== 0) {
     out.push({ text: 'Бонус {amount} не отмечен полученным.', params: { amount: money(totals.bonusPending) } })
@@ -517,6 +541,15 @@ export function closingProblems(stage: Stage, totals: StageTotals): Note[] {
       text: 'В кассе этапа {amount} — к доплате участникам {due}.',
       params: { amount: money(totals.cash), due: money(totals.dueTotal) },
     })
+  }
+  // Касса сошлась, но внутри — перекос между участниками.
+  if (totals.cash === 0) {
+    for (const p of totals.parts) {
+      if (p.due === 0) continue
+      out.push(p.due > 0
+        ? { text: '{name}: недоплачено {amount}.', params: { name: nameOf(p.personId), amount: money(p.due) }, soft: true }
+        : { text: '{name}: переплачено {amount}.', params: { name: nameOf(p.personId), amount: money(-p.due) }, soft: true })
+    }
   }
   return out
 }
@@ -682,7 +715,7 @@ export function settingsProblems(s: Pick<Settings, 'shares' | 'bonusScale'>): No
  * сервер позволил бы подбором суммы вычислить приход, не сохраняя ни одной записи.
  */
 export function operationWarnings(
-  draft: { kind: Kind; amountBase: number; date: string; personId: string | null },
+  draft: { kind: Kind; amountBase: number; date: string; personId: string | null; categoryId?: string | null },
   stage: Stage,
   ops: Op[],
   totals: StageTotals,
@@ -702,13 +735,21 @@ export function operationWarnings(
   if (revealIncome && draft.kind === 'exp' && totals.inc === 0) {
     out.push({ text: 'У этапа ещё нет ни одного прихода.' })
   }
-  if (
-    draft.personId
-    && own.some(
-      o => o.status === 'ok' && o.date === draft.date && base(o) === draft.amountBase && o.personId === draft.personId,
-    )
-  ) {
-    out.push({ text: 'Такая же сумма этому человеку за эту дату уже есть — не дубль?' })
+  // Дубль: та же сумма того же типа той же датой — тому же человеку или в той же категории.
+  if (own.some(o =>
+    o.status === 'ok' && !o.isAuto && o.kind === draft.kind && o.date === draft.date && base(o) === draft.amountBase
+    && (draft.personId ? o.personId === draft.personId : o.categoryId === (draft.categoryId ?? null)))) {
+    out.push({ text: draft.personId
+      ? 'Такая же сумма этому человеку за эту дату уже есть — не дубль?'
+      : 'Такая же запись за эту дату уже есть — не дубль?' })
+  }
+  // Неполученный бонус лежит в кассе, но это деньги получателя бонуса.
+  const free = totals.cash - totals.bonusPending
+  if (revealIncome && draft.kind !== 'in' && totals.bonusPending > 0 && draft.amountBase > free) {
+    out.push({
+      text: 'Свободно в кассе {free}: остальное — неполученный бонус {bonus}.',
+      params: { free: money(free), bonus: money(totals.bonusPending) },
+    })
   }
   if (daysBetween(draft.date, today()) > 30) {
     out.push({ text: 'Дата операции старше 30 дней.' })

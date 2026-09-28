@@ -23,8 +23,9 @@ const totals = computed(() =>
       debt: acc.debt + c.debt,
       contract: acc.contract + o.contractAmount,
       bonusPending: acc.bonusPending + c.bonusPending,
+      fxDiff: acc.fxDiff + c.fxDiff,
     }),
-    { cash: 0, debt: 0, contract: 0, bonusPending: 0 },
+    { cash: 0, debt: 0, contract: 0, bonusPending: 0, fxDiff: 0 },
   ))
 
 type Kpi = { label: string; icon: string; value: string; sub: string; tone?: 'acc' | 'bad' | 'warn' }
@@ -35,7 +36,9 @@ const kpis = computed(() => {
       label: t('Общая касса'),
       icon: 'ph:wallet',
       value: m(totals.value.cash),
-      sub: t('наличные на руках'),
+      sub: totals.value.fxDiff
+        ? t('наличные на руках · в т. ч. курсовая разница {amount}', { amount: m(totals.value.fxDiff) })
+        : t('наличные на руках'),
       tone: totals.value.cash < 0 ? ('bad' as const) : ('acc' as const),
     },
   ]

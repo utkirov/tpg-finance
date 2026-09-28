@@ -238,6 +238,7 @@ function migrate(db: DatabaseSync) {
       is_auto     INTEGER NOT NULL DEFAULT 0,        -- 1 у строк бонуса
       received    INTEGER NOT NULL DEFAULT 0,        -- бонус получен: только тогда он в расчёте
       received_at TEXT,
+      client_key  TEXT,                              -- ключ формы: защита от двойной отправки
       parent_id   TEXT REFERENCES operations(id),    -- у бонуса — породивший приход
       reverses_id TEXT REFERENCES operations(id),    -- у сторнирующей записи
       created_at  TEXT    NOT NULL,
@@ -345,6 +346,13 @@ function migrate(db: DatabaseSync) {
     db.exec('ALTER TABLE operations ADD COLUMN received_at TEXT')
     db.exec("UPDATE operations SET received = 1, received_at = date WHERE is_auto = 1")
   }
+
+  // Ключ формы у операции: повторная отправка той же формы не создаёт вторую запись.
+  const opCols2 = db.prepare('PRAGMA table_info(operations)').all() as Array<{ name: string }>
+  if (opCols2.length && !opCols2.some(c => c.name === 'client_key')) {
+    db.exec('ALTER TABLE operations ADD COLUMN client_key TEXT')
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS operations_client_key ON operations(client_key) WHERE client_key IS NOT NULL')
 
   // Статус «обещано» упразднён. Такие записи деньгами не были — проводить их
   // молча нельзя, поэтому они отменяются с понятной причиной и остаются в истории.
@@ -568,6 +576,7 @@ const toOp = (r: Row): Op => ({
   isAuto: !!r.is_auto,
   received: !!r.received,
   receivedAt: r.received_at ?? null,
+  clientKey: r.client_key ?? null,
   parentId: r.parent_id,
   reversesId: r.reverses_id,
   createdAt: r.created_at,
@@ -652,13 +661,15 @@ export function insertOp(op: Op) {
     .prepare(
       `INSERT INTO operations
         (id, stage_id, object_id, date, kind, amount, currency, rate, amount_base, person_id, category_id,
-         team_id, off_object, note, status, fx, is_auto, received, received_at, parent_id, reverses_id, created_at, created_by, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         team_id, off_object, note, status, fx, is_auto, received, received_at, parent_id, reverses_id, created_at, created_by, reason,
+         client_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       op.id, op.stageId, op.objectId, op.date, op.kind, op.amount, op.currency, op.rate, op.amountBase,
       op.personId, op.categoryId, op.teamId, op.offObject ? 1 : 0, op.note, op.status, op.fx,
       op.isAuto ? 1 : 0, op.received ? 1 : 0, op.receivedAt, op.parentId, op.reversesId, op.createdAt, op.createdBy, op.reason,
+      op.clientKey ?? null,
     )
 }
 
