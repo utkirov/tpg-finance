@@ -23,9 +23,8 @@ const ops = computed(() =>
 
 const objectName = (id: string) => state.value.objects.find(o => o.id === id)?.name ?? '—'
 
-/** Когда ждать деньги: названный срок либо этап, который их принесёт. */
-const when = (row: { dueDate: string | null; stageNumber: number | null; left: number }) => {
-  if (row.dueDate) return dmy(row.dueDate)
+/** Когда ждать деньги: этап, который их принесёт. */
+const when = (row: { stageNumber: number | null; left: number }) => {
   if (row.stageNumber !== null) return t('после этапа {n}', { n: row.stageNumber })
   return row.left > 0 ? t('срок не назначен') : '—'
 }
@@ -33,7 +32,6 @@ const when = (row: { dueDate: string | null; stageNumber: number | null; left: n
 const nextText = computed(() => {
   const next = plan.value.next
   if (!next) return t('платежей не запланировано')
-  if (next.dueDate) return dmy(next.dueDate)
   return next.stageNumber !== null ? t('после этапа {n}', { n: next.stageNumber }) : t('срок не назначен')
 })
 
@@ -52,9 +50,11 @@ const kpis = computed(() => [
     label: t('Получено'),
     icon: 'ph:hand-coins',
     value: m(plan.value.paid),
-    sub: summary.value.bonuses
-      ? t('в том числе бонусов {amount}', { amount: m(summary.value.bonuses) })
-      : t('объектов: {count}', { count: plan.value.rows.length }),
+    sub: summary.value.bonusesPending
+      ? t('бонус получен {got}, не получен {left}', { got: m(summary.value.bonuses), left: m(summary.value.bonusesPending) })
+      : summary.value.bonuses
+        ? t('в том числе бонусов {amount}', { amount: m(summary.value.bonuses) })
+        : t('объектов: {count}', { count: plan.value.rows.length }),
   },
   {
     label: t('Ещё не получил'),
@@ -128,7 +128,6 @@ const print = () => window.print()
               <td class="n" :data-label="t('Осталось')" :class="{ acc: r.left > 0 }">{{ m(r.left) }}</td>
               <td :data-label="t('Когда')">
                 {{ when(r) }}
-                <span v-if="r.promised" class="pill m">{{ t('обещано {amount}', { amount: m(r.promised) }) }}</span>
               </td>
             </tr>
             <tr class="tot">
@@ -157,7 +156,7 @@ const print = () => window.print()
             </tr>
           </thead>
           <tbody>
-            <tr v-for="op in ops" :key="op.id" :class="{ auto: op.isAuto, promised: op.status === 'promised' }">
+            <tr v-for="op in ops" :key="op.id" :class="{ auto: op.isAuto, pending: op.isAuto && !op.received }">
               <td class="n" :data-label="t('Дата')">{{ dmy(op.date) }}</td>
               <td :data-label="t('Объект')">
                 <NuxtLink :to="`/stages/${op.stageId}`">{{ objectName(op.objectId) }}</NuxtLink>
@@ -165,7 +164,7 @@ const print = () => window.print()
               <td class="desc">
                 <b>{{ op.isAuto ? t('Бонус') : op.kind === 'adv' ? t('Аванс') : t('Расход объекта') }}</b>
                 <small v-if="op.note">{{ op.note }}</small>
-                <span v-if="op.status === 'promised'" class="pill m">{{ t('обещано') }}</span>
+                <span v-if="op.isAuto && !op.received" class="pill m">{{ t('не получен') }}</span>
               </td>
               <td class="n" :data-label="t('Сумма')">{{ m(op.amountBase) }}</td>
             </tr>

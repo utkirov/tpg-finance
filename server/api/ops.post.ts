@@ -1,9 +1,10 @@
 import {
-  BONUS_CAT, bonusOf, calcStage, categoriesFor, money, operationWarnings, toBase,
-  type Kind, type Note, type Op, type OpStatus,
+  BONUS_CAT, bonusOf, calcStage, categoriesFor, dmy, money, operationWarnings, toBase,
+  type Kind, type Note, type Op,
 } from '#shared/calc'
 import { abilities } from '#shared/roles'
 import { teamMembers } from '#shared/plan'
+import { voidOperation } from '../utils/voiding'
 
 /**
  * Новая операция: приход, расход объекта или аванс участнику.
@@ -11,11 +12,21 @@ import { teamMembers } from '#shared/plan'
  * Приход тут же порождает строку расхода «Бонус» на получателя объекта —
  * обе записи ложатся одной транзакцией, поэтому бонус не может потеряться.
  *
- * Статус «обещано» — договорились, но деньги не выданы: в кассу не входит,
- * попадает в список предстоящих выплат.
+ * Строка бонуса создаётся сразу и видна в ленте, но в расчёт идёт только
+ * после отметки «получено» (ops/[id]/bonus).
  *
- * Предупреждения (аванс больше доли, дубль, дата задним числом, освоение)
- * возвращаются клиенту без записи; повтор с force: true сохраняет.
+ * У каждой операции свой курс доллара на дату (fx, сумов за 1 USD): по нему
+ * она пересчитывается при показе в другой валюте. Для пары USD ↔ UZS из него же
+ * берётся курс к валюте объекта.
+ *
+ * Предупреждения (аванс больше доли, дубль, дата задним числом, освоение,
+ * неполученный бонус в кассе) возвращаются клиенту без записи; повтор с force: true сохраняет.
+ *
+ * clientKey — ключ открытия формы: повторная отправка той же формы (двойное
+ * нажатие, повтор после обрыва связи) возвращает уже созданную запись.
+ *
+ * replaces — «Исправить»: старая запись сторнируется и новая ложится
+ * одной транзакцией. Право то же, что у сторно.
  */
 export default defineEventHandler(async (event) => {
   const user = requireAbility(event, 'write')
@@ -27,15 +38,16 @@ export default defineEventHandler(async (event) => {
     amount: number
     currency?: string
     rate?: number
+    fx?: number
     date: string
     personId?: string | null
     categoryId?: string | null
     teamId?: string | null
     offObject?: boolean
     note?: string
-    status?: OpStatus
-    dueDate?: string | null
     force?: boolean
+    clientKey?: string
+    replaces?: string
   }>(event)
 
   const kind = oneOf(body.kind, ['in', 'exp', 'adv'] as const, 'тип операции')
@@ -43,11 +55,20 @@ export default defineEventHandler(async (event) => {
   const amount = cents(body.amount, 'сумма')
   const date = isoDate(body.date)
   const note = text(body.note, 'комментарий')
-  const status = oneOf(body.status ?? 'ok', ['ok', 'promised'] as const, 'статус')
-  must(status === 'ok' || kind !== 'in', 'Приход не может быть обязательством')
-  const dueDate = body.dueDate ? isoDate(body.dueDate, 'срок') : null
+  const fx = Number(body.fx)
+  must(Number.isFinite(fx) && fx > 0 && fx < 1e9, 'Укажите курс доллара на дату операции')
+  const clientKey = body.clientKey ? text(body.clientKey, 'ключ формы', { max: 64 }) : null
+  const replacesId = body.replaces ? text(body.replaces, 'исправляемая запись', { max: 64 }) : null
+  if (replacesId) requireAbility(event, 'closeStages')
 
   return tx(() => {
+    // Та же форма пришла второй раз — запись уже есть, вторую не создаём.
+    if (clientKey) {
+      const row = useDb().prepare('SELECT id FROM operations WHERE client_key = ?').get(clientKey) as { id: string } | undefined
+      const existing = row ? getOp(row.id) : null
+      if (existing) return { saved: true, repeated: true, op: existing, bonus: null, hint: null, warnings: [] as Note[] }
+    }
+
     const stage = getStage(text(body.stageId, 'этап', { required: true })) ?? notFound('Этап')
     const obj = getObject(stage.objectId) ?? notFound('Объект')
     requireObject(event, obj.id)
@@ -57,7 +78,13 @@ export default defineEventHandler(async (event) => {
     must(stage.status !== 'check', 'Этап на сверке — новые операции заблокированы')
 
     const currency = (text(body.currency, 'валюта', { max: 3 }) || obj.currency).toUpperCase()
-    const rate = currency === obj.currency ? 1 : Number(body.rate)
+    const pair = new Set([currency, obj.currency.toUpperCase()])
+    // Сумы и доллары: курс к валюте объекта — это тот же курс доллара, в нужную сторону.
+    const rate = currency === obj.currency.toUpperCase()
+      ? 1
+      : pair.has('USD') && pair.has('UZS')
+        ? (currency === 'UZS' ? 1 / fx : fx)
+        : Number(body.rate)
     must(Number.isFinite(rate) && rate > 0 && rate < 1e9, 'Укажите курс к валюте объекта на дату операции')
     const amountBase = toBase(amount, rate)
     must(amountBase > 0, 'Сумма в валюте объекта получилась нулевой — проверьте курс')
@@ -107,10 +134,23 @@ export default defineEventHandler(async (event) => {
     }
     if (personId) must(settings.people.some(p => p.id === personId), 'Человек не найден в справочнике')
 
-    const ops = opsOfStage(stage.id)
+    // Исправление: старая запись того же этапа, ещё живая и не строка бонуса.
+    const replaced = replacesId ? (getOp(replacesId) ?? notFound('Операция')) : null
+    if (replaced) {
+      must(replaced.stageId === stage.id, 'Исправленная запись должна остаться в том же этапе')
+      must(replaced.status === 'ok', 'Операция уже отменена')
+      must(!replaced.isAuto, 'Строка бонуса отдельно не исправляется — исправьте породивший её приход')
+    }
+
+    // Проверки считаются так, будто исправляемой записи (и её бонуса) уже нет.
+    const ops = opsOfStage(stage.id).filter(o => !replaced || (o.id !== replaced.id && o.parentId !== replaced.id))
     const totals = calcStage(stage, ops, sharesOfVersion(obj.sharesVersion))
-    const warnings = status === 'ok' ? operationWarnings({ kind, amountBase, date, personId }, stage, ops, totals) : []
+    const warnings = operationWarnings({ kind, amountBase, date, personId, categoryId }, stage, ops, totals, {
+      revealIncome: ab.seeContract,
+    })
     if (warnings.length && !body.force) return { saved: false, warnings }
+
+    if (replaced) voidOperation(replaced, `исправление: заменена записью от ${dmy(date)}`, user.id)
 
     const now = new Date().toISOString()
     const op: Op = {
@@ -122,28 +162,32 @@ export default defineEventHandler(async (event) => {
       amount,
       currency,
       rate,
+      fx,
       amountBase,
       personId,
       categoryId: kind === 'exp' || offObject ? categoryId : null,
       teamId: kind === 'exp' ? teamId : null,
       offObject,
       note,
-      status,
-      dueDate,
+      status: 'ok',
       isAuto: false,
+      received: false,
+      receivedAt: null,
       parentId: null,
       reversesId: null,
       createdAt: now,
       createdBy: user.id,
       reason: '',
+      clientKey,
     }
     insertOp(op)
-    audit('operation', op.id, 'create', { kind, amount, currency, date, status }, user.id)
+    if (replaced) audit('operation', op.id, 'replace', { was: replaced.id }, user.id)
+    audit('operation', op.id, 'create', { kind, amount, currency, fx, date, status: 'ok' }, user.id)
 
     // Бонус: процент с каждого прихода, а не с суммы договора.
     let bonus: Op | null = null
     let hint: Note | null = null
-    if (kind === 'in' && status === 'ok') {
+    if (kind === 'in') {
       if (!obj.bonusPersonId) {
         hint = { text: 'У объекта не указан получатель бонуса — строка бонуса не создана. Приход требует внимания.' }
       } else {
@@ -156,6 +200,7 @@ export default defineEventHandler(async (event) => {
             amount: value,
             currency: obj.currency,
             rate: 1,
+            fx,
             amountBase: value,
             personId: obj.bonusPersonId,
             categoryId: BONUS_CAT,
@@ -163,13 +208,20 @@ export default defineEventHandler(async (event) => {
             offObject: false,
             note: `бонус ${obj.bonusRate} % с прихода ${money(amountBase)}`,
             isAuto: true,
+            // Начислен, но не получен: в ленте виден сразу, в расчёт — после отметки.
+            received: false,
+            receivedAt: null,
             parentId: op.id,
+            clientKey: null,
             createdAt: new Date().toISOString(),
           }
           insertOp(bonus)
           audit('operation', bonus.id, 'auto-bonus', { parent: op.id, amount: value }, user.id)
           const who = settings.people.find(p => p.id === obj.bonusPersonId)?.name ?? ''
-          hint = { text: 'Создана строка расхода «Бонус» {amount} · {name}.', params: { amount: money(value), name: who } }
+          hint = {
+            text: 'Начислен бонус {amount} · {name}. В расчёт он пойдёт после отметки «Получено».',
+            params: { amount: money(value), name: who },
+          }
         }
       }
     }

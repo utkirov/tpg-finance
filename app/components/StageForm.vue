@@ -4,7 +4,7 @@ import { money, parseMoney, stagesOf, type Obj, type Stage } from '#shared/calc'
 const props = defineProps<{ open: boolean; object: Obj; stage?: Stage | null }>()
 const emit = defineEmits<{ close: []; saved: [id: string] }>()
 
-const { state, send } = useFinance()
+const { raw: state, send } = useFinance() // суммы этапов — в валюте учёта объекта
 const { t } = useT()
 const err = useErr()
 

@@ -8,7 +8,7 @@ const { t } = useT()
 
 const stage = computed(() => stageById(String(route.params.id)))
 const object = computed(() => (stage.value ? objectById(stage.value.objectId) : null))
-const { m, label } = useMoney(() => object.value?.currency)
+const { m, label } = useMoney()
 const totals = computed(() => (stage.value ? totalsOf(state.value, stage.value.id) : null))
 
 const acts = computed(() =>

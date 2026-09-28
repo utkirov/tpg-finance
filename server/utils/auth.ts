@@ -113,28 +113,53 @@ export function requireObject(event: H3Event, objectId: string): SessionUser {
 /* ---------- защита от подбора пароля ---------- */
 
 /**
- * Пять неудач подряд по одному логину — минута паузы.
- * Счётчик в памяти: перезапуск его сбрасывает, но перебор он ломает,
- * а лишней таблицы в базе не заводит.
+ * Два счётчика неудач:
+ *  - по логину: пять подряд — минута паузы (перебор пароля одной учётки);
+ *  - по адресу: двадцать за десять минут — пауза на десять минут
+ *    (перебор многих логинов с одного адреса, где счётчик по логину не срабатывает).
+ * Счётчики в памяти: перезапуск их сбрасывает, но на один процесс этого
+ * достаточно, а лишней таблицы в базе не заводим. Карта чистится от старых
+ * записей, чтобы перебор с разных адресов не раздувал память.
  */
-const TRIES = new Map<string, { count: number; until: number }>()
-const MAX_TRIES = 5
-const LOCK_MS = 60_000
+interface Tries { count: number; until: number }
+const BY_LOGIN = new Map<string, Tries>()
+const BY_IP = new Map<string, Tries>()
+const LOGIN_MAX = 5
+const LOGIN_LOCK_MS = 60_000
+const IP_MAX = 20
+const IP_LOCK_MS = 10 * 60_000
+const MAP_LIMIT = 10_000
 
-export function tooManyTries(login: string): boolean {
-  const row = TRIES.get(login.toLowerCase())
+function locked(map: Map<string, Tries>, key: string, max: number): boolean {
+  const row = map.get(key)
   if (!row) return false
-  if (Date.now() > row.until) { TRIES.delete(login.toLowerCase()); return false }
-  return row.count >= MAX_TRIES
+  if (Date.now() > row.until) { map.delete(key); return false }
+  return row.count >= max
 }
 
-export function noteFailedTry(login: string) {
-  const key = login.toLowerCase()
-  const row = TRIES.get(key)
+function note(map: Map<string, Tries>, key: string, lockMs: number) {
+  if (map.size > MAP_LIMIT) {
+    const now = Date.now()
+    for (const [k, v] of map) if (now > v.until) map.delete(k)
+  }
+  const row = map.get(key)
   const fresh = !row || Date.now() > row.until
-  TRIES.set(key, { count: fresh ? 1 : row.count + 1, until: Date.now() + LOCK_MS })
+  map.set(key, { count: fresh ? 1 : row.count + 1, until: Date.now() + lockMs })
+}
+
+export function clientAddress(event: H3Event): string {
+  return getRequestIP(event, { xForwardedFor: process.env.FINANCE_TRUST_PROXY === '1' }) ?? 'unknown'
+}
+
+export function tooManyTries(login: string, ip: string): boolean {
+  return locked(BY_LOGIN, login.toLowerCase(), LOGIN_MAX) || locked(BY_IP, ip, IP_MAX)
+}
+
+export function noteFailedTry(login: string, ip: string) {
+  note(BY_LOGIN, login.toLowerCase(), LOGIN_LOCK_MS)
+  note(BY_IP, ip, IP_LOCK_MS)
 }
 
 export function forgetTries(login: string) {
-  TRIES.delete(login.toLowerCase())
+  BY_LOGIN.delete(login.toLowerCase())
 }

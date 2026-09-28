@@ -16,6 +16,8 @@ import { hashPassword } from './password'
  */
 
 export const DB_FILE = resolve(process.env.FINANCE_DB || '.data/finance.db')
+/** Вложения (чеки, договоры) — рядом с базой. */
+export const FILES_DIR = resolve(dirname(DB_FILE), 'files')
 let handle: DatabaseSync | null = null
 
 export function useDb(): DatabaseSync {
@@ -224,15 +226,19 @@ function migrate(db: DatabaseSync) {
       amount      INTEGER NOT NULL,                  -- центы в валюте операции
       currency    TEXT    NOT NULL DEFAULT 'USD',
       rate        REAL    NOT NULL DEFAULT 1,        -- курс к валюте объекта на дату
+      fx          REAL    NOT NULL DEFAULT 0,        -- сумов за 1 USD на дату операции (для показа)
       amount_base INTEGER NOT NULL,                  -- центы в валюте объекта
       person_id   TEXT REFERENCES people(id),
       category_id TEXT REFERENCES categories(id),
       team_id     TEXT REFERENCES teams(id),       -- чья работа оплачена
       off_object  INTEGER NOT NULL DEFAULT 0,      -- расход не по объекту
       note        TEXT    NOT NULL DEFAULT '',
-      status      TEXT    NOT NULL DEFAULT 'ok',     -- ok | void | promised
-      due_date    TEXT,                              -- срок обязательства
+      status      TEXT    NOT NULL DEFAULT 'ok',     -- ok | void
+      due_date    TEXT,                              -- устарело: срок обязательства (обещаний больше нет)
       is_auto     INTEGER NOT NULL DEFAULT 0,        -- 1 у строк бонуса
+      received    INTEGER NOT NULL DEFAULT 0,        -- бонус получен: только тогда он в расчёте
+      received_at TEXT,
+      client_key  TEXT,                              -- ключ формы: защита от двойной отправки
       parent_id   TEXT REFERENCES operations(id),    -- у бонуса — породивший приход
       reverses_id TEXT REFERENCES operations(id),    -- у сторнирующей записи
       created_at  TEXT    NOT NULL,
@@ -316,6 +322,49 @@ function migrate(db: DatabaseSync) {
         SELECT object_id, team_id, '', amount, note FROM object_budgets_old;
       DROP TABLE object_budgets_old;
     `)
+  }
+
+  // Курс доллара у каждой операции: по нему она пересчитывается при показе в другой валюте.
+  // Старым записям ставим то, что о курсе известно: операция в другой валюте уже несёт курс
+  // USD↔UZS, остальным — курс объекта, а без него справочный курс показа.
+  const opCols = db.prepare('PRAGMA table_info(operations)').all() as Array<{ name: string }>
+  if (opCols.length && !opCols.some(c => c.name === 'fx')) {
+    const fallback = Number((db.prepare("SELECT value FROM meta WHERE key = 'display_rate'").get() as Row | undefined)?.value) || DEFAULT_DISPLAY_RATE
+    db.exec('ALTER TABLE operations ADD COLUMN fx REAL NOT NULL DEFAULT 0')
+    db.prepare(`
+      UPDATE operations SET fx = CASE
+        WHEN upper(currency) = 'UZS' AND (SELECT upper(currency) FROM objects o WHERE o.id = object_id) = 'USD' AND rate > 0 THEN 1.0 / rate
+        WHEN upper(currency) = 'USD' AND (SELECT upper(currency) FROM objects o WHERE o.id = object_id) = 'UZS' THEN rate
+        ELSE COALESCE(NULLIF((SELECT rate FROM objects o WHERE o.id = object_id), 0), ?)
+      END`).run(fallback)
+  }
+
+  // Бонус получил отметку «получено». Существовавшие строки бонуса раньше всегда шли
+  // в расчёт — считаем их полученными, чтобы закрытые этапы не разошлись задним числом.
+  if (opCols.length && !opCols.some(c => c.name === 'received')) {
+    db.exec('ALTER TABLE operations ADD COLUMN received INTEGER NOT NULL DEFAULT 0')
+    db.exec('ALTER TABLE operations ADD COLUMN received_at TEXT')
+    db.exec("UPDATE operations SET received = 1, received_at = date WHERE is_auto = 1")
+  }
+
+  // Ключ формы у операции: повторная отправка той же формы не создаёт вторую запись.
+  const opCols2 = db.prepare('PRAGMA table_info(operations)').all() as Array<{ name: string }>
+  if (opCols2.length && !opCols2.some(c => c.name === 'client_key')) {
+    db.exec('ALTER TABLE operations ADD COLUMN client_key TEXT')
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS operations_client_key ON operations(client_key) WHERE client_key IS NOT NULL')
+
+  // Статус «обещано» упразднён. Такие записи деньгами не были — проводить их
+  // молча нельзя, поэтому они отменяются с понятной причиной и остаются в истории.
+  const promised = db.prepare("SELECT id FROM operations WHERE status = 'promised'").all() as Row[]
+  if (promised.length) {
+    const now = new Date().toISOString()
+    const stamp = db.prepare("UPDATE operations SET status = 'void', reason = ?, due_date = NULL WHERE id = ?")
+    const log = db.prepare('INSERT INTO audit_log (at, user_id, entity, entity_id, action, details) VALUES (?, NULL, ?, ?, ?, ?)')
+    for (const r of promised) {
+      stamp.run('статус «обещано» упразднён — запись не была выплатой', r.id)
+      log.run(now, 'operation', r.id, 'void', JSON.stringify({ reason: 'статус «обещано» упразднён' }))
+    }
   }
 }
 
@@ -413,7 +462,17 @@ export function readSettings(): Settings {
     sharesVersion,
     bonusScale: scaleOfVersion(scaleVersion),
     scaleVersion,
+    rev: settingsRev(),
   }
+}
+
+export function settingsRev(): number {
+  return Number(meta('settings_rev') ?? 0)
+}
+
+/** Любая запись в справочники двигает номер правки — см. Settings.rev. */
+export function bumpSettingsRev() {
+  setMeta('settings_rev', String(settingsRev() + 1))
 }
 
 /* ---------- сущности ---------- */
@@ -513,8 +572,11 @@ const toOp = (r: Row): Op => ({
   offObject: !!r.off_object,
   note: r.note,
   status: r.status,
-  dueDate: r.due_date,
+  fx: r.fx ?? 0,
   isAuto: !!r.is_auto,
+  received: !!r.received,
+  receivedAt: r.received_at ?? null,
+  clientKey: r.client_key ?? null,
   parentId: r.parent_id,
   reversesId: r.reverses_id,
   createdAt: r.created_at,
@@ -565,12 +627,29 @@ export function readObjects(): Obj[] {
   return (useDb().prepare('SELECT * FROM objects ORDER BY created_at').all() as Row[]).map(toObj)
 }
 
-export function readStages(): Stage[] {
-  return (useDb().prepare('SELECT * FROM stages ORDER BY number').all() as Row[]).map(toStage)
+/**
+ * Этапы и операции. Список объектов сужает выборку прямо в SQL:
+ * пользователю с двумя объектами не нужно поднимать ленту всей фирмы.
+ */
+export function readStages(objectIds?: string[]): Stage[] {
+  const db = useDb()
+  const rows = objectIds
+    ? db.prepare('SELECT * FROM stages WHERE object_id IN (SELECT value FROM json_each(?)) ORDER BY number').all(JSON.stringify(objectIds))
+    : db.prepare('SELECT * FROM stages ORDER BY number').all()
+  return (rows as Row[]).map(toStage)
 }
 
-export function readOps(): Op[] {
-  return (useDb().prepare('SELECT * FROM operations ORDER BY date, created_at').all() as Row[]).map(toOp)
+export function readOps(objectIds?: string[]): Op[] {
+  const db = useDb()
+  const rows = objectIds
+    ? db.prepare('SELECT * FROM operations WHERE object_id IN (SELECT value FROM json_each(?)) ORDER BY date, created_at').all(JSON.stringify(objectIds))
+    : db.prepare('SELECT * FROM operations ORDER BY date, created_at').all()
+  return (rows as Row[]).map(toOp)
+}
+
+/** Удалить все сессии пользователя, кроме, может быть, одной — текущей. */
+export function dropSessions(userId: string, except = '') {
+  useDb().prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, except)
 }
 
 export function readAttachments(): Attachment[] {
@@ -582,13 +661,15 @@ export function insertOp(op: Op) {
     .prepare(
       `INSERT INTO operations
         (id, stage_id, object_id, date, kind, amount, currency, rate, amount_base, person_id, category_id,
-         team_id, off_object, note, status, due_date, is_auto, parent_id, reverses_id, created_at, created_by, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         team_id, off_object, note, status, fx, is_auto, received, received_at, parent_id, reverses_id, created_at, created_by, reason,
+         client_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       op.id, op.stageId, op.objectId, op.date, op.kind, op.amount, op.currency, op.rate, op.amountBase,
-      op.personId, op.categoryId, op.teamId, op.offObject ? 1 : 0, op.note, op.status, op.dueDate,
-      op.isAuto ? 1 : 0, op.parentId, op.reversesId, op.createdAt, op.createdBy, op.reason,
+      op.personId, op.categoryId, op.teamId, op.offObject ? 1 : 0, op.note, op.status, op.fx,
+      op.isAuto ? 1 : 0, op.received ? 1 : 0, op.receivedAt, op.parentId, op.reversesId, op.createdAt, op.createdBy, op.reason,
+      op.clientKey ?? null,
     )
 }
 
@@ -857,23 +938,13 @@ function seed(db: DatabaseSync) {
   ]
   const op = db.prepare(
     `INSERT INTO operations (id, stage_id, object_id, date, kind, amount, currency, rate, amount_base,
-      person_id, category_id, team_id, off_object, note, status, due_date, is_auto, parent_id, reverses_id,
+      person_id, category_id, team_id, off_object, note, status, fx, is_auto, received, parent_id, reverses_id,
       created_at, created_by, reason)
-     VALUES (?, 'st-restoran-1', 'obj-restoran', ?, ?, ?, 'USD', 1, ?, ?, ?, ?, 0, ?, 'ok', NULL, ?, ?, NULL, ?, 'u-owner', '')`,
+     VALUES (?, 'st-restoran-1', 'obj-restoran', ?, ?, ?, 'USD', 1, ?, ?, ?, ?, 0, ?, 'ok', 12000, ?, 0, ?, NULL, ?, 'u-owner', '')`,
   )
   for (const [id, date, kind, amount, personId, categoryId, note, isAuto, parentId, teamId] of rows) {
     op.run(id, date, kind, amount, amount, personId, categoryId, teamId, note, isAuto, parentId, `${date}T10:00:00.000Z`)
   }
-
-  // Обещанный платёж: по нему видно, когда человек получит следующие деньги.
-  db.prepare(
-    `INSERT INTO operations (id, stage_id, object_id, date, kind, amount, currency, rate, amount_base,
-      person_id, category_id, team_id, off_object, note, status, due_date, is_auto, parent_id, reverses_id,
-      created_at, created_by, reason)
-     VALUES ('op-14', 'st-restoran-1', 'obj-restoran', '2026-07-26', 'exp', 80000, 'USD', 1, 80000,
-             'p-parhayot', 'sub', 't-struct', 0, 'вторая часть за конструктив', 'promised', '2026-10-05',
-             0, NULL, NULL, '2026-07-26T10:00:00.000Z', 'u-owner', '')`,
-  ).run()
 
   // Журнал заполняем и для контрольного примера: иначе история пустая,
   // и непонятно, работает ли она вообще.

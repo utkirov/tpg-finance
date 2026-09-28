@@ -2,9 +2,10 @@ import { STAGE_NAME, calcStage, closingProblems, type Note, type StageStatus } f
 
 /**
  * Жизненный цикл этапа: черновик → в работе → сверка → закрыт.
- * Закрытие проходит только при выполнении равенства
- * «сумма этапа = расходы + доли» при нулевой дебиторке и нулевой кассе.
- * Иначе возвращается величина и место расхождения.
+ * Закрытие проходит при нулевой дебиторке, полученном бонусе и нулевой кассе.
+ * Перекос между участниками (одному переплатили, другому недоплатили —
+ * в сумме ноль) закрытие тоже останавливает, но его можно принять явно:
+ * force + причина, с записью в журнал. Жёсткие условия force не обходит.
  */
 const ALLOWED: Record<StageStatus, StageStatus[]> = {
   draft: ['check'],
@@ -16,7 +17,7 @@ const ALLOWED: Record<StageStatus, StageStatus[]> = {
 export default defineEventHandler(async (event) => {
   const user = requireAbility(event, 'closeStages')
   const id = text(getRouterParam(event, 'id'), 'этап', { required: true })
-  const body = await readBody<{ status: StageStatus }>(event)
+  const body = await readBody<{ status: StageStatus; force?: boolean; reason?: string }>(event)
   const next = oneOf(body.status, ['draft', 'work', 'check', 'closed'] as const, 'статус')
 
   return tx(() => {
@@ -27,8 +28,16 @@ export default defineEventHandler(async (event) => {
     if (next === 'closed') {
       const obj = getObject(stage.objectId) ?? notFound('Объект')
       const totals = calcStage(stage, opsOfStage(stage.id), sharesOfVersion(obj.sharesVersion))
-      const problems = closingProblems(stage, totals)
-      if (problems.length) return { closed: false, problems }
+      const people = readPeople().concat(readArchivedPeople())
+      const nameOf = (id: string) => people.find(p => p.id === id)?.name ?? id
+      const problems = closingProblems(stage, totals, nameOf)
+      const hard = problems.filter(p => !p.soft)
+      if (hard.length) return { closed: false, problems: hard, softOnly: false }
+      if (problems.length) {
+        const reason = text(body.reason, 'причина', { max: 300 })
+        if (!body.force || !reason) return { closed: false, problems, softOnly: true }
+        audit('stage', stage.id, 'close-uneven', { reason, problems: problems.map(p => p.params) }, user.id)
+      }
     }
 
     const closedAt = next === 'closed' ? new Date().toISOString() : null

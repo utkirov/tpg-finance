@@ -18,7 +18,13 @@ export default defineEventHandler(async (event) => {
     shares: Share[]
     bonusScale: ScaleRow[]
     teams?: Array<{ id: string; name: string; composite?: boolean; parts?: string[] }>
+    rev?: number
   }>(event)
+
+  // Список приходит целиком, и всё, чего в нём нет, уходит в архив.
+  // Поэтому пустой или неполный список (старая вкладка) — не повод архивировать людей.
+  must(Array.isArray(body.people) && Array.isArray(body.categories), 'Справочники пришли не полностью')
+  must(Number.isInteger(body.rev), 'Обновите страницу: справочники открыты в старой версии приложения')
 
   const teams = (body.teams ?? []).map(t => ({
     id: text(t.id, 'команда: id', { required: true, max: 64 }),
@@ -81,10 +87,14 @@ export default defineEventHandler(async (event) => {
 
   const problems = settingsProblems({ shares, bonusScale })
   if (problems.length) bad(problems[0]!.text, problems[0]!.params)
+  // В базе процент — REAL; храним ровно до сотых, чтобы 33.33 не превращалось в 33.329999.
+  for (const x of shares) x.percent = Math.round(x.percent * 100) / 100
 
   return tx(() => {
     const db = useDb()
     const now = new Date().toISOString()
+    must(body.rev === settingsRev(), 'Справочники изменились в другом окне — обновите страницу и повторите правку')
+    bumpSettingsRev()
 
     if (body.currency) setMeta('currency', text(body.currency, 'валюта', { max: 3 }).toUpperCase())
     if (body.displayRate != null) {
@@ -94,7 +104,6 @@ export default defineEventHandler(async (event) => {
     }
 
     // Люди: добавить, обновить, снятых с учёта пометить архивными.
-    const keepPeople = new Set(people.map(p => p.id))
     db.prepare('UPDATE people SET archived = 1').run()
     const upsertPerson = db.prepare(
       `INSERT INTO people (id, name, role, phone, team_id, is_sharer, archived) VALUES (?, ?, ?, ?, ?, ?, 0)
@@ -102,7 +111,6 @@ export default defineEventHandler(async (event) => {
          team_id = excluded.team_id, is_sharer = excluded.is_sharer, archived = 0`,
     )
     for (const p of people) upsertPerson.run(p.id, p.name, p.role, p.phone, p.teamId, p.isSharer ? 1 : 0)
-    must(keepPeople.size === people.length, 'Список людей повреждён')
 
     // Команды: обновляем состав, снятые с учёта уходят в архив.
     if (body.teams) {
@@ -157,6 +165,6 @@ export default defineEventHandler(async (event) => {
 })
 
 /** Отпечаток набора — чтобы не плодить версии при сохранении без изменений. */
-function fingerprint(rows: Array<Record<string, unknown>>): string {
+function fingerprint(rows: object[]): string {
   return JSON.stringify(rows.map(r => Object.entries(r).sort(([a], [b]) => a.localeCompare(b))).sort())
 }

@@ -2,11 +2,12 @@
 import {
   CURRENCIES, KIND_NAME, categoriesFor, categoryGroups, currencyIcon, currencyLabel, dmy, money,
   parseMoney, parseRate, toBase, today,
-  type Kind, type Note, type Obj, type OpStatus, type Stage,
+  type Kind, type Note, type Obj, type Op, type Stage,
 } from '#shared/calc'
 import { teamMembers } from '#shared/plan'
 
-const props = defineProps<{ open: boolean; stage: Stage; object: Obj }>()
+/** edit — «Исправить»: форма заполняется этой записью, при сохранении она сторнируется и заменяется новой. */
+const props = defineProps<{ open: boolean; stage: Stage; object: Obj; edit?: Op | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 const { state, settings, can, send, refresh } = useFinance()
@@ -29,9 +30,13 @@ const form = reactive({
   note: '',
   currency: props.object.currency,
   rate: '',
-  promised: false,
-  dueDate: '',
+  /** Курс доллара на дату операции: сумов за 1 USD. */
+  fx: '',
 })
+/** Ключ этого открытия формы: повторная отправка не создаст вторую запись. */
+const clientKey = ref('')
+/** Курс поправили руками — больше не подставляем курс ЦБ при смене даты. */
+const fxTouched = ref(false)
 const files = ref<File[]>([])
 const error = ref('')
 const busy = ref(false)
@@ -43,6 +48,34 @@ watch(
   () => props.open,
   async (isOpen) => {
     if (!isOpen) return
+    clientKey.value = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+    fxTouched.value = false
+    files.value = []
+    error.value = ''
+    const e = props.edit
+    if (e) {
+      // Исправление: всё как было записано, в валюте операции и с её курсом.
+      const category = settings.value.categories.find(c => c.id === e.categoryId)
+      Object.assign(form, {
+        amount: money(e.amount),
+        kind: e.kind === 'adv' && e.offObject ? 'exp' : e.kind,
+        personId: e.personId,
+        categoryId: e.categoryId,
+        teamId: e.teamId,
+        group: category?.group ?? null,
+        direct: !(e.kind === 'adv' && e.offObject),
+        date: e.date,
+        note: e.note,
+        currency: e.currency,
+        rate: e.currency.toUpperCase() === props.object.currency.toUpperCase() ? '' : fmtRate(e.rate),
+        fx: e.fx ? fmtRate(e.fx) : defaultFx(),
+      })
+      fxTouched.value = true
+      // Дочерние watch сбрасывают несовместимые поля — возвращаем записанные.
+      await nextTick()
+      Object.assign(form, { personId: e.personId, categoryId: e.categoryId, teamId: e.teamId })
+      return
+    }
     // По умолчанию расход: это самая частая запись с телефона.
     Object.assign(form, {
       amount: '',
@@ -56,11 +89,9 @@ watch(
       note: '',
       currency: props.object.currency,
       rate: '',
-      promised: false,
-      dueDate: '',
+      fx: defaultFx(),
     })
-    files.value = []
-    error.value = ''
+    loadCbu()
     await nextTick()
     amountInput.value?.focus()
   },
@@ -71,7 +102,6 @@ watch(() => form.kind, (kind) => {
     form.personId = null
     form.categoryId = null
     form.teamId = null
-    form.promised = false
   }
   if (kind === 'adv') {
     form.categoryId = null
@@ -170,9 +200,58 @@ async function addCategory() {
 }
 const foreign = computed(() => form.currency.toUpperCase() !== props.object.currency.toUpperCase())
 
-/* ---------- курс: подсказка, ввод всё равно ручной ---------- */
+/* ---------- курс доллара на дату: у каждой операции свой ---------- */
+
+/**
+ * Для сумов и долларов курс один — сколько сумов за 1 $ в день операции.
+ * По нему операция в сумах переводится в доллары объекта (и наоборот),
+ * и по нему же вся лента пересчитывается при показе в другой валюте.
+ * Подставляется курс объекта или биржевой, но его можно и нужно поправить,
+ * если меняли по другому курсу.
+ */
+const usdUzs = computed(() => {
+  const pair = new Set([form.currency.toUpperCase(), props.object.currency.toUpperCase()])
+  return [...pair].every(c => c === 'USD' || c === 'UZS')
+})
 
 interface RateInfo { date: string | null; rates: Record<string, number>; stale: boolean }
+
+/** Официальный курс ЦБ РУз на дату операции — операции вносят и задним числом. */
+const cbu = ref<{ date: string; rate: number | null } | null>(null)
+
+async function loadCbu() {
+  const date = form.date || today()
+  try {
+    cbu.value = await $fetch<{ date: string; rate: number | null }>('/api/rates/usd', { params: { date } })
+  } catch {
+    cbu.value = { date, rate: null }
+  }
+  if (!fxTouched.value && cbu.value?.rate) form.fx = fmtRate(Math.round(cbu.value.rate * 100) / 100)
+}
+
+// Сменили дату — подтягиваем курс ЦБ на неё, если курс не правили руками.
+watch(() => form.date, () => {
+  if (props.open) loadCbu()
+})
+
+/** Пока курс ЦБ не пришёл: курс объекта, иначе справочный. */
+function defaultFx(): string {
+  const v = props.object.rate > 0 ? props.object.rate : Number(settings.value.displayRate) || 0
+  return v ? fmtRate(v) : ''
+}
+
+const fxCaption = computed(() => {
+  const parts: string[] = []
+  if (cbu.value?.rate) {
+    parts.push(t('ЦБ на {date}: {rate}', { date: dmy(cbu.value.date), rate: cbu.value.rate.toLocaleString('ru-RU') }))
+  }
+  if (props.object.rate > 0) parts.push(t('курс объекта {rate}', { rate: props.object.rate.toLocaleString('ru-RU') }))
+  if (!cbu.value?.rate) parts.push(t('Курс ЦБ не загрузился — проверьте или введите вручную.'))
+  return parts.join(' · ')
+})
+
+/* ---------- курс к валюте объекта: для других валют (не сумы и не доллары) ---------- */
+
 const rateInfo = ref<RateInfo | null>(null)
 const rateLoading = ref(false)
 
@@ -188,8 +267,8 @@ async function loadRates() {
   }
 }
 
-watch(foreign, (isForeign) => {
-  if (isForeign) loadRates()
+watch(() => foreign.value && !usdUzs.value, (needed) => {
+  if (needed) loadRates()
 }, { immediate: true })
 
 // В поле нужен точный курс, в подписи — читаемый.
@@ -250,9 +329,20 @@ const rateCaption = computed(() => {
   })
 })
 
+/** Курс к валюте объекта, которым считает сервер. */
+function rateToObject(): number | null {
+  if (!foreign.value) return 1
+  if (usdUzs.value) {
+    const fx = parseRate(form.fx)
+    if (fx == null || fx <= 0) return null
+    return form.currency.toUpperCase() === 'UZS' ? 1 / fx : fx
+  }
+  return rateFromInput()
+}
+
 const preview = computed(() => {
   const amount = parseMoney(form.amount)
-  const rate = rateFromInput()
+  const rate = rateToObject()
   if (amount == null || rate == null || !foreign.value) return ''
   return t('≈ {amount} {currency} по курсу на {date}', {
     amount: money(toBase(amount, rate)),
@@ -278,8 +368,10 @@ function addFiles(event: Event) {
 async function save(force = false) {
   error.value = ''
   const amount = parseMoney(form.amount)
-  const rate = foreign.value ? rateFromInput() : 1
+  const rate = rateToObject()
+  const fx = parseRate(form.fx)
   if (amount == null || amount <= 0) return (error.value = t('Введите сумму больше нуля'))
+  if (fx == null || fx <= 0) return (error.value = t('Укажите курс доллара на дату операции'))
   if (rate == null || rate <= 0) return (error.value = t('Укажите курс к валюте объекта'))
   if (form.kind === 'exp' && !form.categoryId) return (error.value = t('Расход без категории не сохраняется'))
   if (offObject.value && !form.group) return (error.value = t('Выберите группу расходов'))
@@ -291,7 +383,6 @@ async function save(force = false) {
 
   busy.value = true
   try {
-    const status: OpStatus = form.promised ? 'promised' : 'ok'
     const res = await send<{ saved: boolean; warnings: Note[]; hint?: Note | null; op?: { id: string } }>('/api/ops', {
       method: 'POST',
       body: {
@@ -302,14 +393,15 @@ async function save(force = false) {
         amount,
         currency: form.currency.toUpperCase(),
         rate,
+        fx,
         date: form.date || today(),
         personId: form.personId,
         categoryId: form.categoryId,
         teamId: form.direct ? form.teamId : null,
         note: form.note,
-        status,
-        dueDate: form.promised && form.dueDate ? form.dueDate : null,
         force,
+        clientKey: clientKey.value,
+        replaces: props.edit?.id,
       },
     })
 
@@ -340,7 +432,15 @@ async function save(force = false) {
 </script>
 
 <template>
-  <AppDialog :open="open" :title="t(KIND_NAME[form.kind])" :icon="KIND_ICON[form.kind]" @close="emit('close')">
+  <AppDialog
+    :open="open"
+    :title="edit ? t('Исправить: {kind}', { kind: t(KIND_NAME[form.kind]) }) : t(KIND_NAME[form.kind])"
+    :icon="edit ? 'ph:pencil-simple' : KIND_ICON[form.kind]"
+    @close="emit('close')"
+  >
+    <p v-if="edit" class="hint" style="margin-top: 0">
+      {{ t('Прежняя запись будет сторнирована, вместо неё сохранится эта. Обе останутся в истории.') }}
+    </p>
     <div class="f">
       <label for="op-amount">{{ t('Сумма') }}</label>
       <div class="pick">
@@ -371,7 +471,23 @@ async function save(force = false) {
       </div>
     </div>
 
-    <div v-if="foreign" class="f">
+    <div class="f">
+      <label for="op-fx">{{ t('Курс доллара на дату, сумов за 1 $') }}</label>
+      <input
+        id="op-fx"
+        v-model="form.fx"
+        v-mask="'rate'"
+        @input="fxTouched = true"
+        class="num"
+        inputmode="decimal"
+        autocomplete="off"
+        placeholder="12 000"
+      >
+      <p class="hint" style="margin-top: 6px">{{ fxCaption }}</p>
+      <p v-if="preview && usdUzs" class="hint" style="margin-top: 4px">{{ preview }}</p>
+    </div>
+
+    <div v-if="foreign && !usdUzs" class="f">
       <label for="op-rate">{{ rateLabel }}</label>
       <input
         id="op-rate"
@@ -525,18 +641,10 @@ async function save(force = false) {
         <label for="op-note">{{ t('Комментарий') }}</label>
         <input id="op-note" v-model="form.note" autocomplete="off" placeholder="—">
       </div>
-
-      <div v-if="form.kind !== 'in'" class="f">
-        <label class="check">
-          <input v-model="form.promised" type="checkbox">
-          {{ t('Обязательство: договорились, деньги не выданы') }}
-        </label>
-        <input v-if="form.promised" v-model="form.dueDate" type="date" :aria-label="t('Срок выплаты')" style="width: 100%">
-      </div>
     </MoreFields>
 
-    <p v-if="form.kind === 'in' && object.bonusPersonId && !form.promised" class="hint">
-      {{ t('После сохранения система создаст строку расхода «Бонус» {rate} % на получателя объекта.', { rate: object.bonusRate }) }}
+    <p v-if="form.kind === 'in' && object.bonusPersonId" class="hint">
+      {{ t('После сохранения появится строка «Бонус» {rate} % на получателя объекта. В расчёт она пойдёт после отметки «Получено».', { rate: object.bonusRate }) }}
     </p>
     <p v-if="error" class="err">{{ error }}</p>
 

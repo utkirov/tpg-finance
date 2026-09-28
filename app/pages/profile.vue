@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ROLE_NAME } from '#shared/roles'
+import { ROLES_ENABLED, roleName } from '#shared/roles'
 import type { Lang } from '#shared/i18n'
 
 const { me, state, refresh } = useFinance()
@@ -36,6 +36,12 @@ function fail(text: string) {
 
 async function logout() {
   await $fetch('/api/auth/logout', { method: 'POST' })
+  // Всё, что браузер успел закэшировать, после выхода не нужно следующему человеку.
+  try {
+    if ('caches' in window) await Promise.all((await caches.keys()).map(k => caches.delete(k)))
+  } catch {
+    // Кэш недоступен (приватный режим) — и хранить в нём нечего.
+  }
   await refresh()
   await navigateTo('/login')
 }
@@ -46,7 +52,7 @@ async function logout() {
     <div class="head-row">
       <div>
         <h1>{{ me?.name }}</h1>
-        <p class="sub">{{ me ? t(ROLE_NAME[me.role]) : '' }} · {{ t('логин {login}', { login: me?.login ?? '' }) }}</p>
+        <p class="sub"><template v-if="ROLES_ENABLED">{{ me ? t(roleName(me.role)) : '' }} · </template>{{ t('логин {login}', { login: me?.login ?? '' }) }}</p>
       </div>
       <button type="button" class="btn" @click="logout"><Icon name="ph:sign-out" />{{ t('Выйти') }}</button>
     </div>

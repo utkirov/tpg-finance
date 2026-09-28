@@ -9,7 +9,7 @@ const err = useErr()
 
 const objectId = computed(() => String(route.params.id))
 const object = computed(() => objectById(objectId.value))
-const { m } = useMoney(() => object.value?.currency)
+const { m } = useMoney()
 
 const entries = ref<AuditEntry[]>([])
 const loading = ref(true)

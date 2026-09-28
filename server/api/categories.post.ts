@@ -24,6 +24,8 @@ export default defineEventHandler(async (event) => {
 
     if (same) {
       db.prepare('UPDATE categories SET archived = 0 WHERE id = ?').run(same.id)
+      bumpSettingsRev()
+      audit('settings', 'main', 'category-restore', { id: same.id, name }, user.id)
       return { id: same.id }
     }
 
@@ -32,6 +34,7 @@ export default defineEventHandler(async (event) => {
       'INSERT INTO categories (id, name, team_id, group_name, system, archived) VALUES (?, ?, ?, ?, 0, 0)',
     ).run(id, name, teamId, group)
 
+    bumpSettingsRev()
     audit('settings', 'main', 'category', { name, teamId, group }, user.id)
     return { id }
   })

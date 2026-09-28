@@ -87,10 +87,10 @@ const kpis = computed(() => {
                   {{ t('Освоено {percent} поступивших', { percent: percent(row.c.usage) }) }}
                 </small>
               </td>
-              <td class="n" :data-label="t('Договор')">{{ m0(row.o.contractAmount, row.o.currency) }}</td>
-              <td class="n" :data-label="t('Получено')">{{ m(row.c.inc, row.o.currency) }}</td>
-              <td class="n" :data-label="t('Касса')">{{ m(row.c.cash, row.o.currency) }}</td>
-              <td class="n" :data-label="t('Дебиторка')">{{ m(row.c.debt, row.o.currency) }}</td>
+              <td class="n" :data-label="t('Договор')">{{ m0(row.o.contractAmount) }}</td>
+              <td class="n" :data-label="t('Получено')">{{ m(row.c.inc) }}</td>
+              <td class="n" :data-label="t('Касса')">{{ m(row.c.cash) }}</td>
+              <td class="n" :data-label="t('Дебиторка')">{{ m(row.c.debt) }}</td>
               <td class="n" :data-label="t('Этапов')">{{ row.stages.length }}</td>
             </tr>
           </tbody>

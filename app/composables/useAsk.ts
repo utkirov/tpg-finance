@@ -6,6 +6,10 @@ export interface AskRequest {
   ok?: string
   /** Только сообщение, без кнопки отмены. */
   notice?: boolean
+  /** Тип поля ввода: по умолчанию текст, для даты — date. */
+  inputType?: 'text' | 'date'
+  /** Что подставить в поле сразу. */
+  value?: string
 }
 
 // ponytail: один диалог на приложение, обработчик держим в модуле —

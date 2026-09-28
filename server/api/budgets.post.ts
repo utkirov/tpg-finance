@@ -1,3 +1,5 @@
+import { money } from '#shared/calc'
+
 /**
  * План расходов по командам: о какой сумме договорились на объект.
  * Ноль убирает строку плана.
@@ -70,19 +72,29 @@ export default defineEventHandler(async (event) => {
         if (x.amount === 0) drop.run(objectId, teamId, x.personId)
         else upsert.run(objectId, teamId, x.personId, x.amount, '')
       }
-
-      // Расписать больше, чем весь план команды, нельзя — иначе план ничего не значит.
-      const row = db.prepare(
-        `SELECT
-           COALESCE(SUM(CASE WHEN person_id = '' THEN amount END), 0) AS team,
-           COALESCE(SUM(CASE WHEN person_id <> '' THEN amount END), 0) AS assigned
-         FROM object_budgets WHERE object_id = ? AND team_id = ?`,
-      ).get(objectId, teamId) as { team: number; assigned: number }
-      must(
-        row.team === 0 || row.assigned <= row.team,
-        'По людям расписано больше, чем весь план команды',
-      )
     }
+
+    // План, разбивка по людям и выделения на этапы должны сходиться после любой правки:
+    // и когда расписывают людей, и когда урезают сам план.
+    const row = db.prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN person_id = '' THEN amount END), 0) AS team,
+         COALESCE(SUM(CASE WHEN person_id <> '' THEN amount END), 0) AS assigned
+       FROM object_budgets WHERE object_id = ? AND team_id = ?`,
+    ).get(objectId, teamId) as { team: number; assigned: number }
+    const allocated = (db.prepare(
+      `SELECT COALESCE(SUM(amount), 0) AS n FROM stage_allocations
+        WHERE team_id = ? AND stage_id IN (SELECT id FROM stages WHERE object_id = ?)`,
+    ).get(teamId, objectId) as { n: number }).n
+
+    // Расписывают план, а не пустоту: без суммы на команду делить нечего.
+    must(row.assigned === 0 || row.team > 0, 'Сначала задайте план команды, потом делите его на людей')
+    must(row.assigned <= row.team, 'По людям расписано больше, чем весь план команды')
+    must(
+      allocated <= row.team,
+      'На этапы уже выделено {amount} — план не может быть меньше',
+      { amount: money(allocated) },
+    )
 
     audit('object', objectId, 'budget', { teamId, amount: changesTeam ? amount : undefined, people }, user.id)
     return { ok: true }

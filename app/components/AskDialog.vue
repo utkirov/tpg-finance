@@ -6,7 +6,7 @@ const input = ref<HTMLInputElement>()
 
 watch(request, async (req) => {
   if (!req) return
-  value.value = ''
+  value.value = req.value ?? ''
   if (req.label) {
     await nextTick()
     input.value?.focus()
@@ -27,7 +27,14 @@ function confirm() {
     <p v-if="request?.body" class="hint" style="margin: 0">{{ request.body }}</p>
     <div v-if="request?.label" class="f">
       <label for="ask-input">{{ request.label }}</label>
-      <input id="ask-input" ref="input" v-model="value" autocomplete="off" @keydown.enter.prevent="confirm">
+      <input
+        id="ask-input"
+        ref="input"
+        v-model="value"
+        :type="request.inputType ?? 'text'"
+        autocomplete="off"
+        @keydown.enter.prevent="confirm"
+      >
     </div>
     <div class="acts">
       <button v-if="!request?.notice" type="button" class="btn ghost" @click="answer(null)">{{ t('Отмена') }}</button>

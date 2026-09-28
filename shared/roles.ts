@@ -62,7 +62,40 @@ const TABLE: Record<Role, Abilities> = {
   },
 }
 
+/**
+ * Режим ролей:
+ *  - 'off'    — ролей нет, у всех права владельца;
+ *  - 'simple' — две роли: администратор (владелец) и оператор (все остальные);
+ *  - 'full'   — четыре роли из ТЗ с урезанием видимости (таблица выше).
+ *
+ * Сейчас 'simple': все видят всё, операции вносит каждый, а сторно, закрытие
+ * этапов, объекты, справочники и пользователи — только у администратора.
+ */
+export type RoleMode = 'off' | 'simple' | 'full'
+export const ROLE_MODE = 'simple' as RoleMode
+/** Роли вообще влияют на что-то. */
+export const ROLES_ENABLED: boolean = ROLE_MODE !== 'off'
+
+/** Оператор: видит всё и вносит операции, но ничего не отменяет и не настраивает. */
+const OPERATOR: Abilities = {
+  write: true, kinds: ['in', 'exp', 'adv'], manage: false,
+  seeContract: true, seeBonus: true, seeAllShares: true, seeOwnShare: true,
+  allObjects: true, closeStages: false,
+}
+
+/** Названия ролей в текущем режиме: что показать в списке и в шапке. */
+export const ROLE_CHOICES: Partial<Record<Role, string>> = ROLE_MODE === 'simple'
+  ? { owner: 'Администратор', member: 'Оператор' }
+  : ROLE_NAME
+
+export function roleName(role: Role): string {
+  if (ROLE_MODE === 'simple') return role === 'owner' ? 'Администратор' : 'Оператор'
+  return ROLE_NAME[role] ?? role
+}
+
 export function abilities(role: Role): Abilities {
+  if (ROLE_MODE === 'off') return TABLE.owner
+  if (ROLE_MODE === 'simple') return role === 'owner' ? TABLE.owner : OPERATOR
   return TABLE[role] ?? TABLE.foreman
 }
 

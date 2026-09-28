@@ -21,20 +21,20 @@ export default defineEventHandler(async (event) => {
     must(stage.status !== 'closed', 'Этап закрыт')
     must(readTeams().some(t => t.id === teamId), 'Команда не найдена в справочнике')
 
+    // Только этот объект: остальная лента для проверки не нужна.
     const state = {
-      ops: readOps(),
-      stages: readStages(),
+      ops: readOps([stage.objectId]),
+      stages: readStages([stage.objectId]),
       teams: readTeams(),
       budgets: readBudgets(),
       allocations: readAllocations().filter(a => !(a.stageId === stageId && a.teamId === teamId)),
     }
     const row = objectTeams(state, stage.objectId).find(r => r.teamId === teamId)
     const free = row ? row.unallocated : 0
-    must(
-      !row || row.planned === 0 || amount <= free,
-      'По плану команды свободно только {amount}',
-      { amount: money(free) },
-    )
+    // Выделяют из плана: без плана команды выделять не из чего.
+    // Снять выделение (ноль) можно всегда.
+    must(amount === 0 || (row && row.planned > 0), 'Сначала задайте команде план на объект')
+    must(amount <= free || amount === 0, 'По плану команды свободно только {amount}', { amount: money(free) })
 
     if (amount === 0) {
       db.prepare('DELETE FROM stage_allocations WHERE stage_id = ? AND team_id = ?').run(stageId, teamId)

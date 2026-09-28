@@ -24,7 +24,7 @@ const op = (kind: Op['kind'], amount: number, extra: Partial<Op> = {}): Op => ({
   id: `op${++seq}`, stageId: 's1', objectId: 'o1', date: '2026-07-13', kind,
   amount, currency: 'USD', rate: 1, amountBase: amount,
   personId: null, categoryId: kind === 'exp' ? 'x' : null, teamId: null, offObject: false,
-  note: '', status: 'ok', dueDate: null, isAuto: false, parentId: null, reversesId: null,
+  note: '', status: 'ok', fx: 12_000, isAuto: false, received: false, receivedAt: null, parentId: null, reversesId: null,
   createdAt: `2026-07-13T00:00:${String(seq).padStart(2, '0')}Z`, createdBy: null, reason: '',
   ...extra,
 })
@@ -86,6 +86,7 @@ test('прогноз доли учитывает и факт, и остаток 
   assert.equal(f.spent, 140_000, 'потрачено 1 400')
   // осталось по планам: арх 1 800 + констр 1 800 + диз 5 000 = 8 600
   assert.equal(f.planLeft, 860_000)
+  assert.equal(f.bonusAhead, 0, 'у объекта без ставки бонуса впереди нет')
   assert.equal(f.net, 1_800_000 - 140_000 - 860_000, 'прогнозная чистая доля 8 000')
   assert.equal(f.net, 800_000)
 
@@ -93,6 +94,15 @@ test('прогноз доли учитывает и факт, и остаток 
   assert.equal(ilhom.amount, 600_000, '75 % от 8 000')
   assert.equal(ilhom.paid, 160_000)
   assert.equal(ilhom.due, 440_000)
+
+  // Со ставкой 10 %: неполученный бонус 800 с прихода 8 000 и будущий 10 % с неоплаченных 10 000.
+  const withBonus = objectForecast(
+    { ...state, ops: [...state.ops, op('exp', 80_000, { isAuto: true, categoryId: 'bonus' })] },
+    { ...obj, bonusRate: 10 },
+    shares,
+  )
+  assert.equal(withBonus.bonusAhead, 80_000 + 100_000, 'бонус впереди 1 800 = 10 % от всего договора')
+  assert.equal(withBonus.net, 800_000 - 180_000)
   assert.equal(f.parts.reduce((a, p) => a + p.amount, 0), f.net, 'доли сходятся к чистой доле')
 })
 
@@ -105,7 +115,7 @@ test('расход не по объекту не уменьшает чистую
   const t = calcStage(stage, ops, shares)
   assert.equal(t.exp, 100_000, 'в расходы этапа попал только прямой расход')
   assert.equal(t.adv, 50_000, 'расход не по объекту учтён авансом участнику')
-  assert.equal(t.net, 1_700_000, 'чистая доля уменьшилась только на прямой расход')
+  assert.equal(t.net, 700_000, 'чистая доля = получено 8 000 − прямой расход 1 000')
   assert.equal(t.cash, 650_000, 'а касса — на оба')
 })
 
@@ -168,7 +178,6 @@ test('карточка человека: сколько получил, скол
     allocations: [{ stageId: 's1', teamId: 'arch', amount: 200_000 }],
     ops: [
       op('exp', 120_000, { personId: 'shuhrat', teamId: 'arch' }),
-      op('exp', 80_000, { personId: 'shuhrat', teamId: 'arch', status: 'promised', dueDate: '2026-10-05' }),
     ],
   } as never
 
@@ -177,7 +186,8 @@ test('карточка человека: сколько получил, скол
   assert.equal(plan.expected, 200_000, 'с архитекторами договорились на 2 000')
   assert.equal(plan.paid, 120_000, 'выплачено 1 200')
   assert.equal(plan.left, 80_000, 'не получено 800')
-  assert.equal(plan.next?.dueDate, '2026-10-05', 'срок взят из обязательства')
+  assert.equal(plan.next?.stageNumber, 1, 'следующие деньги — с этапа 1, где команде ещё выделено')
+  assert.equal(plan.next?.amount, 80_000)
   assert.equal(plan.rows[0]!.objectName, 'Ресторан')
 
   // Дольщик считается по доле, а не по плану команды.

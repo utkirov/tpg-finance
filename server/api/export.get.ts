@@ -1,4 +1,5 @@
 import { KIND_NAME, OP_STATUS_NAME, dmy, type Kind } from '#shared/calc'
+import { toCsv } from '#shared/csv'
 import { projectState } from '../utils/redact'
 
 /**
@@ -39,7 +40,7 @@ export default defineEventHandler((event) => {
 
   const table: string[][] = [[
     'Дата', 'Объект', 'Этап', 'Тип', 'Категория', 'Человек',
-    'Сумма', 'Валюта', 'Курс', 'Сумма в валюте объекта', 'Статус', 'Срок', 'Комментарий',
+    'Сумма', 'Валюта', 'Курс к валюте объекта', 'Курс USD (сумов за 1 $)', 'Сумма в валюте объекта', 'Статус', 'Бонус получен', 'Комментарий',
   ]]
   for (const op of rows) {
     table.push([
@@ -52,14 +53,16 @@ export default defineEventHandler((event) => {
       (op.amount / 100).toFixed(2),
       op.currency,
       String(op.rate),
+      String(op.fx || ''),
       (op.amountBase / 100).toFixed(2),
       OP_STATUS_NAME[op.status],
-      dmy(op.dueDate),
+      op.isAuto ? (op.received ? `да, ${dmy(op.receivedAt)}` : 'нет') : '',
       op.note,
     ])
   }
 
-  const csv = '﻿' + table.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n')
+  // Сумма, курс и сумма в валюте объекта — числа; остальное текст и защищается от формул.
+  const csv = toCsv(table, [6, 8, 9, 10])
   const label = stageId
     ? `${objName(rows[0]?.objectId ?? '')}-этап${stageNo(stageId)}`
     : objectId ? objName(objectId) : 'операции'

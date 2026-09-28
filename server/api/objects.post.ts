@@ -42,16 +42,19 @@ export default defineEventHandler(async (event) => {
     const bonusPersonId = body.bonusPersonId ? text(body.bonusPersonId, 'получатель бонуса') : null
     if (bonusPersonId) must(settings.people.some(p => p.id === bonusPersonId), 'Получатель бонуса не найден в справочнике')
 
-    const suggested = rateFor(settings.bonusScale, contractAmount)
-    const bonusRate = Number(body.bonusRate ?? suggested)
+    const db = useDb()
+    const id = body.id ? text(body.id, 'объект') : null
+    const existing = id ? (getObject(id) ?? notFound('Объект')) : null
+
+    // Шкала замораживается в объекте: при правке подсказка берётся из его версии,
+    // а не из действующей. Без ставки в запросе у существующего объекта она не меняется.
+    const scale = existing ? scaleOfVersion(existing.scaleVersion) : settings.bonusScale
+    const suggested = rateFor(scale, contractAmount)
+    const bonusRate = Number(body.bonusRate ?? (existing ? existing.bonusRate : suggested))
     must(Number.isFinite(bonusRate) && bonusRate >= 0, 'Ставка бонуса указана неверно')
     must(bonusRate <= MAX_BONUS_RATE, `Ставка бонуса выше ${MAX_BONUS_RATE} % не сохраняется`)
 
-    const db = useDb()
-    const id = body.id ? text(body.id, 'объект') : null
-
-    if (id) {
-      const existing = getObject(id) ?? notFound('Объект')
+    if (id && existing) {
       // Суммы операций хранятся в валюте объекта. Сменить её задним числом —
       // значит молча переназвать все записанные деньги, поэтому не даём.
       if (currency !== existing.currency) {
@@ -75,7 +78,7 @@ export default defineEventHandler(async (event) => {
         wasAmount: existing.contractAmount,
         reason: text(body.rateReason, 'причина', { max: 300 }),
       }, user.id)
-      return { id, suggestedRate: rateFor(settings.bonusScale, contractAmount) }
+      return { id, suggestedRate: suggested }
     }
 
     const fresh = uid()

@@ -469,6 +469,100 @@ export const UZ: Record<string, string> = {
   'Файл не получен': 'Fayl olinmadi',
   'Файл нужно привязать к объекту или операции': 'Faylni obyekt yoki amaliyotga bogʻlash kerak',
   'Сумма долей {sum} % — должно быть ровно 100.': 'Ulushlar yigʻindisi {sum} % — aniq 100 boʻlishi kerak.',
+  'Показ в этой валюте: каждая операция по своему курсу': 'Shu valyutada koʻrsatish: har bir amaliyot oʻz kursi boʻyicha',
+  'Показ в {currency}: каждая операция — по курсу на свою дату, договор и этапы — по курсу объекта.':
+    '{currency} da koʻrsatish: har bir amaliyot — oʻz sanasidagi kurs boʻyicha, shartnoma va bosqichlar — obyekt kursi boʻyicha.',
+  'курс объекта {rate}': 'obyekt kursi {rate}',
+  'биржевой на {date}: {rate}': '{date} dagi birja kursi: {rate}',
+  'Укажите курс доллара на дату операции': 'Amaliyot sanasidagi dollar kursini kiriting',
+  'Курс доллара на дату, сумов за 1 $': 'Sanadagi dollar kursi, 1 $ uchun soʻm',
+  'После сохранения появится строка «Бонус» {rate} % на получателя объекта. В расчёт она пойдёт после отметки «Получено».':
+    'Saqlangandan keyin obyekt oluvchisiga {rate} % «Bonus» satri paydo boʻladi. «Olindi» belgisidan keyin hisobga kiradi.',
+  'Бонус не получен': 'Bonus olinmagan',
+  'начислен, в расчёт не идёт': 'hisoblangan, hisobga kirmaydi',
+  '{name} · получено {got}, не получено {left}': '{name} · olindi {got}, olinmagan {left}',
+  '{name} · получено {got}': '{name} · olindi {got}',
+  'бонус получен {got}, не получен {left}': 'bonus olindi {got}, olinmagan {left}',
+  'не получен': 'olinmagan',
+  'суммы в {currency}, каждая операция — по своему курсу': 'summalar {currency} da, har bir amaliyot — oʻz kursi boʻyicha',
+  'Роли пока отключены: каждый пользователь работает с полными правами.':
+    'Rollar hozircha oʻchirilgan: har bir foydalanuvchi toʻliq huquq bilan ishlaydi.',
+  'в т. ч. полученный бонус {amount}': 'shu jumladan olingan bonus {amount}',
+  'получено − расходы, делится между участниками': 'olingan − xarajatlar, ishtirokchilar oʻrtasida taqsimlanadi',
+  'в расчёт не идёт, пока не отмечен': 'belgilanmaguncha hisobga kirmaydi',
+  'бонус получен {date}': 'bonus {date} da olindi',
+  'бонус начислен, не получен — в расчёт не идёт': 'bonus hisoblangan, olinmagan — hisobga kirmaydi',
+  'записано {amount} · курс {fx}': 'yozilgan {amount} · kurs {fx}',
+  'Бонус получен': 'Bonus olindi',
+  'Снять отметку «получен»': '«Olindi» belgisini olib tashlash',
+  '{name} — {amount}. Бонус войдёт в расходы этапа и уменьшит чистую долю.':
+    '{name} — {amount}. Bonus bosqich xarajatlariga kiradi va sof ulushni kamaytiradi.',
+  'Бонус выйдет из расходов этапа, деньги снова будут числиться в кассе.':
+    'Bonus bosqich xarajatlaridan chiqadi, pul yana kassada hisoblanadi.',
+  'Дебиторка ноль, бонус получен, касса ноль — этап можно закрыть.':
+    'Debitorlik nol, bonus olingan, kassa nol — bosqichni yopish mumkin.',
+  'Скрыть сторно': 'Stornoni yashirish',
+  'Показать сторно · {count}': 'Stornoni koʻrsatish · {count}',
+  'Не получен': 'Olinmagan',
+  'Отметка «получено» ставится только у строки бонуса': '«Olindi» belgisi faqat bonus satriga qoʻyiladi',
+  'Строка бонуса отменена': 'Bonus satri bekor qilingan',
+  'Бонус {amount} не отмечен полученным.': 'Bonus {amount} olingan deb belgilanmagan.',
+  'Начислен бонус {amount} · {name}. В расчёт он пойдёт после отметки «Получено».':
+    'Bonus {amount} hisoblandi · {name}. «Olindi» belgisidan keyin hisobga kiradi.',
+  'Бонус {amount} отмечен полученным {date}': 'Bonus {amount} {date} da olingan deb belgilandi',
+  'Снята отметка «бонус получен» ({amount})': '«Bonus olindi» belgisi olib tashlandi ({amount})',
+  '≈ {amount} {currency} по курсу {rate}': '≈ {amount} {currency}, kurs {rate}',
+  'ЦБ на {date}: {rate}': 'MB {date} holatiga: {rate}',
+  'Курс ЦБ не загрузился — проверьте или введите вручную.': 'MB kursi yuklanmadi — tekshiring yoki qoʻlda kiriting.',
+  'Исправить: {kind}': 'Tuzatish: {kind}',
+  'Прежняя запись будет сторнирована, вместо неё сохранится эта. Обе останутся в истории.':
+    'Avvalgi yozuv storno qilinadi, oʻrniga shu saqlanadi. Ikkalasi ham tarixda qoladi.',
+  'наличные на руках · в т. ч. курсовая разница {amount}': 'qoʻldagi naqd pul · shu jumladan kurs farqi {amount}',
+  'свободно {free} без неполученного бонуса': 'olinmagan bonussiz boʻsh {free}',
+  'в т. ч. курсовая разница {amount}': 'shu jumladan kurs farqi {amount}',
+  'По этапам — от полученных денег: слева выдано, справа осталось. Прогноз — когда заказчик заплатит весь договор: за вычетом расходов ({spent}), остатка планов команд ({plan}) и бонуса впереди ({bonus}).':
+    'Bosqichlar boʻyicha — olingan puldan: chapda berilgan, oʻngda qolgan. Prognoz — buyurtmachi butun shartnomani toʻlaganda: xarajatlar ({spent}), jamoa rejalari qoldigʻi ({plan}) va oldindagi bonus ({bonus}) chegirilgan holda.',
+  'приход − расход − авансы': 'tushum − xarajat − avanslar',
+  'По командам': 'Jamoalar boʻyicha',
+  'Администратор — всё, включая сторно, закрытие этапов, справочники и пользователей. Оператор видит всё и вносит операции.':
+    'Administrator — hammasi, jumladan storno, bosqichlarni yopish, maʼlumotnomalar va foydalanuvchilar. Operator hammasini koʻradi va amaliyot kiritadi.',
+  'Администратор': 'Administrator',
+  'Оператор': 'Operator',
+  'Перекос между участниками': 'Ishtirokchilar oʻrtasida nomutanosiblik',
+  'Касса этапа ноль, но одному переплачено за счёт другого. Закрыть всё равно?':
+    'Bosqich kassasi nol, lekin biriga boshqasi hisobidan ortiqcha toʻlangan. Baribir yopilsinmi?',
+  'Закрыть с расхождением': 'Farq bilan yopish',
+  'Дата получения': 'Olingan sana',
+  'Исправить': 'Tuzatish',
+  'Исправленная запись должна остаться в том же этапе': 'Tuzatilgan yozuv oʻsha bosqichda qolishi kerak',
+  'Строка бонуса отдельно не исправляется — исправьте породивший её приход':
+    'Bonus satri alohida tuzatilmaydi — uni keltirib chiqargan tushumni tuzating',
+  '{name}: недоплачено {amount}.': '{name}: kam toʻlangan {amount}.',
+  '{name}: переплачено {amount}.': '{name}: ortiqcha toʻlangan {amount}.',
+  'Свободно в кассе {free}: остальное — неполученный бонус {bonus}.': 'Kassada boʻsh {free}: qolgani — olinmagan bonus {bonus}.',
+  'Свободно: {amount}': 'Boʻsh: {amount}',
+  'Запись исправлена: прежняя сторнирована и заменена этой': 'Yozuv tuzatildi: avvalgisi storno qilinib, shu bilan almashtirildi',
+  'Этап закрыт с расхождением между участниками: {reason}': 'Bosqich ishtirokchilar oʻrtasidagi farq bilan yopildi: {reason}',
+  'Такая же запись за эту дату уже есть — не дубль?': 'Shu sanada xuddi shunday yozuv bor — takror emasmi?',
+  'Процент доли — не больше двух знаков после запятой.': 'Ulush foizi — verguldan keyin ikki xonadan koʻp emas.',
+  'Сначала смените временный пароль в профиле': 'Avval profilda vaqtinchalik parolni almashtiring',
+  'Новый пароль должен отличаться от текущего': 'Yangi parol joriy paroldan farq qilishi kerak',
+  'Это последний владелец — назначьте другого, прежде чем менять роль или отключать':
+    'Bu oxirgi egasi — rolini oʻzgartirish yoki oʻchirishdan oldin boshqasini tayinlang',
+  'Справочники пришли не полностью': 'Maʼlumotnomalar toʻliq kelmadi',
+  'Обновите страницу: справочники открыты в старой версии приложения':
+    'Sahifani yangilang: maʼlumotnomalar ilovaning eski versiyasida ochilgan',
+  'Справочники изменились в другом окне — обновите страницу и повторите правку':
+    'Maʼlumotnomalar boshqa oynada oʻzgardi — sahifani yangilab, tahrirni takrorlang',
+  'Этап на сверке — сумму не изменить, верните его в работу':
+    'Bosqich solishtiruvda — summani oʻzgartirib boʻlmaydi, uni ishga qaytaring',
+  'По этапу уже получено {amount} — сумма этапа не может быть меньше':
+    'Bosqich boʻyicha {amount} olingan — bosqich summasi bundan kam boʻlolmaydi',
+  'Сначала задайте команде план на объект': 'Avval jamoaga obyekt boʻyicha reja belgilang',
+  'Сначала задайте план команды, потом делите его на людей':
+    'Avval jamoa rejasini belgilang, keyin uni odamlarga taqsimlang',
+  'На этапы уже выделено {amount} — план не может быть меньше':
+    'Bosqichlarga {amount} ajratilgan — reja bundan kam boʻlolmaydi',
   'В долях есть строка без участника.': 'Ulushlarda ishtirokchisiz satr bor.',
   'Ставка бонуса выше {max} % не сохраняется.': '{max} % dan yuqori bonus stavkasi saqlanmaydi.',
   'В шкале есть диапазон с верхней границей ниже нижней.':

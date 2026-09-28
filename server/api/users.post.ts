@@ -18,6 +18,8 @@ export default defineEventHandler(async (event) => {
     const db = useDb()
     const id = body.id ? text(body.id, 'пользователь') : null
     const role = body.role ? oneOf(body.role, ['owner', 'member', 'foreman', 'accountant'] as const, 'роль') : null
+    // Поле, которого нет в запросе, не трогаем: правка имени не должна
+    // отвязывать карточку человека или включать отключённого пользователя.
     const personId = body.personId ? text(body.personId, 'человек') : null
     if (personId) must(readPeople().some(p => p.id === personId), 'Человек не найден в справочнике')
 
@@ -26,11 +28,22 @@ export default defineEventHandler(async (event) => {
       if (!existing) notFound('Пользователь')
       must(id !== user.id || body.active !== false, 'Нельзя отключить самого себя')
 
+      const nextRole = role ?? existing!.role
+      const nextActive = body.active === undefined ? existing!.active : (body.active ? 1 : 0)
+      const nextPerson = 'personId' in body ? personId : existing!.person_id
+
+      // Последнего действующего владельца не понизить и не отключить — иначе справочники,
+      // доступы и пользователи станут недоступны всем.
+      if (existing!.role === 'owner' && existing!.active && (nextRole !== 'owner' || !nextActive)) {
+        const owners = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND active = 1").get() as { n: number }
+        must(owners.n > 1, 'Это последний владелец — назначьте другого, прежде чем менять роль или отключать')
+      }
+
       db.prepare('UPDATE users SET name = ?, role = ?, person_id = ?, active = ? WHERE id = ?').run(
         text(body.name, 'имя', { max: 120 }) || existing!.name,
-        role ?? existing!.role,
-        personId,
-        body.active === false ? 0 : 1,
+        nextRole,
+        nextPerson,
+        nextActive,
         id,
       )
       if (body.password) {
@@ -38,7 +51,9 @@ export default defineEventHandler(async (event) => {
         const { hash, salt } = hashPassword(String(body.password))
         db.prepare('UPDATE users SET pass_hash = ?, pass_salt = ?, must_change = 1 WHERE id = ?').run(hash, salt, id)
       }
-      audit('user', id, 'update', { role: role ?? existing!.role, active: body.active !== false }, user.id)
+      // Сброс пароля и отключение закрывают все открытые входы пользователя.
+      if (body.password || !nextActive) dropSessions(id)
+      audit('user', id, 'update', { role: nextRole, active: !!nextActive, passwordReset: !!body.password }, user.id)
       return { id }
     }
 

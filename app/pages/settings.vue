@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { MAX_BONUS_RATE, categoryGroups, parseRate, settingsProblems, type Category, type Person, type ScaleRow, type Settings, type Share } from '#shared/calc'
-import { ROLE_NAME, type Role } from '#shared/roles'
+import { ROLES_ENABLED, ROLE_CHOICES, ROLE_MODE, roleName, type Role } from '#shared/roles'
 import { MASKS } from '#shared/mask'
 
 const { state, settings, send, refresh } = useFinance()
@@ -10,7 +10,7 @@ const err = useErr()
 
 /** Правится копия: до нажатия «Сохранить» ничего не улетает на сервер. */
 type DraftTeam = { id: string; name: string; composite: boolean; parts: string[] }
-type Draft = Pick<Settings, 'currency' | 'displayRate' | 'people' | 'categories' | 'shares' | 'bonusScale'>
+type Draft = Pick<Settings, 'currency' | 'displayRate' | 'people' | 'categories' | 'shares' | 'bonusScale' | 'rev'>
   & { teams: DraftTeam[] }
 const draft = ref<Draft>(snapshot())
 const message = reactive({ text: '', bad: false })
@@ -19,6 +19,7 @@ const busy = ref(false)
 function snapshot(): Draft {
   const s = settings.value
   return JSON.parse(JSON.stringify({
+    rev: s.rev ?? 0,
     currency: s.currency,
     displayRate: s.displayRate,
     people: s.people,
@@ -192,7 +193,11 @@ async function reset() {
 
 const users = computed(() => state.value.users)
 const showUser = ref(false)
-const userForm = reactive({ id: '', login: '', name: '', role: 'foreman' as Role, personId: '', password: '' })
+// Новый пользователь по умолчанию — с наименьшими правами текущего режима.
+const NEW_ROLE: Role = ROLE_MODE === 'full' ? 'foreman' : ROLE_MODE === 'simple' ? 'member' : 'owner'
+/** В простом режиме прораб, бухгалтер и участник — это один «оператор». */
+const shownRole = (role: Role): Role => (ROLE_MODE === 'simple' && role !== 'owner' ? 'member' : role)
+const userForm = reactive({ id: '', login: '', name: '', role: NEW_ROLE, personId: '', password: '' })
 const userError = ref('')
 
 function openUser(id?: string) {
@@ -201,7 +206,7 @@ function openUser(id?: string) {
     id: u?.id ?? '',
     login: u?.login ?? '',
     name: u?.name ?? '',
-    role: u?.role ?? 'foreman',
+    role: u ? shownRole(u.role) : NEW_ROLE,
     personId: u?.personId ?? '',
     password: '',
   })
@@ -484,9 +489,9 @@ async function disableUser(id: string, name: string) {
             <tr>
               <th>{{ t('Имя') }}</th>
               <th>{{ t('Логин') }}</th>
-              <th>{{ t('Роль') }}</th>
+              <th v-if="ROLES_ENABLED">{{ t('Роль') }}</th>
               <th>{{ t('Карточка человека') }}</th>
-              <th>{{ t('Объектов') }}</th>
+              <th v-if="ROLE_MODE === 'full'">{{ t('Объектов') }}</th>
               <th class="no-print" />
             </tr>
           </thead>
@@ -494,11 +499,11 @@ async function disableUser(id: string, name: string) {
             <tr v-for="u in users" :key="u.id">
               <td class="desc"><b>{{ u.name }}</b></td>
               <td :data-label="t('Логин')" class="mono">{{ u.login }}</td>
-              <td :data-label="t('Роль')">{{ t(ROLE_NAME[u.role]) }}</td>
+              <td v-if="ROLES_ENABLED" :data-label="t('Роль')">{{ t(roleName(u.role)) }}</td>
               <td :data-label="t('Карточка человека')">
                 {{ draft.people.find(p => p.id === u.personId)?.name ?? '—' }}
               </td>
-              <td :data-label="t('Объектов')">
+              <td v-if="ROLE_MODE === 'full'" :data-label="t('Объектов')">
                 {{ u.role === 'owner' || u.role === 'accountant' ? t('все') : u.objectIds.length }}
               </td>
               <td class="act no-print">
@@ -540,10 +545,10 @@ async function disableUser(id: string, name: string) {
         </div>
       </div>
       <div class="row2">
-        <div class="f">
+        <div v-if="ROLES_ENABLED" class="f">
           <label for="u-role">{{ t('Роль') }}</label>
           <select id="u-role" v-model="userForm.role">
-            <option v-for="(name, role) in ROLE_NAME" :key="role" :value="role">{{ t(name) }}</option>
+            <option v-for="(name, role) in ROLE_CHOICES" :key="role" :value="role">{{ t(name!) }}</option>
           </select>
         </div>
         <div class="f">
@@ -558,7 +563,9 @@ async function disableUser(id: string, name: string) {
         <label for="u-pass">{{ userForm.id ? t('Новый пароль (необязательно)') : t('Пароль') }}</label>
         <input id="u-pass" v-model="userForm.password" type="password" autocomplete="new-password">
       </div>
-      <p class="hint">{{ t('Участнику нужна карточка человека — по ней он видит свою долю. Прорабу она не обязательна.') }}</p>
+      <p v-if="ROLE_MODE === 'full'" class="hint">{{ t('Участнику нужна карточка человека — по ней он видит свою долю. Прорабу она не обязательна.') }}</p>
+      <p v-else-if="ROLE_MODE === 'simple'" class="hint">{{ t('Администратор — всё, включая сторно, закрытие этапов, справочники и пользователей. Оператор видит всё и вносит операции.') }}</p>
+      <p v-else class="hint">{{ t('Роли пока отключены: каждый пользователь работает с полными правами.') }}</p>
       <p v-if="userError" class="err">{{ userError }}</p>
       <div class="acts">
         <button type="button" class="btn ghost" @click="showUser = false">{{ t('Отмена') }}</button>

@@ -96,6 +96,14 @@ export function describeAudit(e: AuditEntry, money: (cents: number) => string): 
     }
     case 'operation:auto-bonus':
       return { text: 'Система начислила бонус {amount}', params: { amount: money(num(d.amount)) } }
+    case 'operation:replace':
+      return { text: 'Запись исправлена: прежняя сторнирована и заменена этой' }
+    case 'stage:close-uneven':
+      return { text: 'Этап закрыт с расхождением между участниками: {reason}', params: { reason: str(d.reason) } }
+    case 'operation:bonus-received':
+      return { text: 'Бонус {amount} отмечен полученным {date}', params: { amount: money(num(d.amount)), date: dmy(str(d.date)) } }
+    case 'operation:bonus-unreceived':
+      return { text: 'Снята отметка «бонус получен» ({amount})', params: { amount: money(num(d.amount)) } }
     case 'operation:void':
       return { text: 'Операция сторнирована. Причина: {reason}', params: { reason: str(d.reason) } }
     case 'operation:settle':

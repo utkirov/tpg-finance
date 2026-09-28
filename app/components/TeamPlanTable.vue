@@ -5,13 +5,15 @@ import { objectTeams, teamPeople } from '#shared/plan'
 /** План расходов по командам на объект: договорились — выделили — потратили. */
 const props = defineProps<{ objectId: string; editable: boolean }>()
 
-const { state, send } = useFinance()
+const { state, raw, send } = useFinance()
 const { ask, notice } = useAsk()
 const { t } = useT()
 const { m } = useMoney()
 const err = useErr()
 
-const object = computed(() => state.value.objects.find(o => o.id === props.objectId) ?? null)
+// Таблица — в валюте экрана; формы плана — в валюте учёта объекта (так суммы и хранятся).
+const object = computed(() => raw.value.objects.find(o => o.id === props.objectId) ?? null)
+const rawRows = computed(() => objectTeams(raw.value, props.objectId))
 const objCurrency = computed(() => object.value?.currency ?? 'USD')
 const objRate = computed(() => object.value?.rate ?? 0)
 
@@ -37,7 +39,7 @@ const shareTeamId = ref('')
 const shareRows = ref<Array<{ personId: string; name: string; amount: string; spent: number }>>([])
 const shareError = ref('')
 
-const shareTeam = computed(() => rows.value.find(r => r.teamId === shareTeamId.value) ?? null)
+const shareTeam = computed(() => rawRows.value.find(r => r.teamId === shareTeamId.value) ?? null)
 
 /** Сколько из плана команды ещё не расписано — считается на лету, пока правят. */
 const shareLeft = computed(() => {
@@ -48,7 +50,7 @@ const shareLeft = computed(() => {
 
 function openPeople(teamId: string) {
   shareTeamId.value = teamId
-  shareRows.value = teamPeople(state.value, props.objectId, teamId).map(r => ({
+  shareRows.value = teamPeople(raw.value, props.objectId, teamId).map(r => ({
     personId: r.personId,
     name: r.name,
     amount: r.planned ? money(r.planned) : '',
@@ -85,8 +87,8 @@ const personLine = (teamId: string) =>
     .join(' · ')
 
 function open(teamId: string) {
-  const row = rows.value.find(r => r.teamId === teamId)
-  const budget = state.value.budgets.find(b => b.objectId === props.objectId && b.teamId === teamId)
+  const row = rawRows.value.find(r => r.teamId === teamId)
+  const budget = raw.value.budgets.find(b => b.objectId === props.objectId && b.teamId === teamId)
   form.teamId = teamId
   form.amount = row && row.planned ? money(row.planned) : ''
   form.note = budget?.note ?? ''
@@ -123,7 +125,7 @@ async function remove(teamId: string) {
   const go = await ask({
     title: t('Убрать команду из плана?'),
     body: t('Снимется и план, и выделенное на этапы ({amount}). Проведённые расходы останутся.', {
-      amount: money(row?.allocated ?? 0),
+      amount: m(row?.allocated ?? 0),
     }),
   })
   if (!go) return

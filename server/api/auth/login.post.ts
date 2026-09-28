@@ -5,11 +5,12 @@ export default defineEventHandler(async (event) => {
   const password = String(body?.password ?? '')
   must(password.length > 0, 'Введите пароль')
 
-  must(!tooManyTries(login), 'Слишком много попыток входа. Подождите минуту.')
+  const ip = clientAddress(event)
+  must(!tooManyTries(login, ip), 'Слишком много попыток входа. Подождите минуту.')
 
   const user = checkPassword(login, password)
   if (!user) {
-    noteFailedTry(login)
+    noteFailedTry(login, ip)
     // Одинаковый ответ на неверный логин и неверный пароль.
     denied('Неверный логин или пароль', 401)
   }

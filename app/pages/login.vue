@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Lang } from '#shared/i18n'
 
-const { refresh } = useFinance()
+const { state, refresh } = useFinance()
 const { t, lang, LANGS } = useT()
 const err = useErr()
 
@@ -18,7 +18,9 @@ async function submit() {
   try {
     await $fetch('/api/auth/login', { method: 'POST', body: { login: form.login, password: form.password } })
     await refresh()
-    await navigateTo('/')
+    // С временным паролем открыт только профиль — ведём туда сразу, без промежуточного
+    // перехода на главную и перенаправления оттуда.
+    await navigateTo(state.value.mustChange ? '/profile' : '/')
   } catch (e) {
     error.value = err(e)
   } finally {
