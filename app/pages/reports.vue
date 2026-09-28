@@ -124,7 +124,7 @@ const flowClass = (row: PeriodRow) => (row.flow < 0 ? 'neg' : '')
           {{ filter.from || filter.to
             ? t('с {from} по {to}', { from: filter.from ? dmy(filter.from) : '…', to: filter.to ? dmy(filter.to) : '…' })
             : t('за всё время') }}
-          · {{ t('суммы сведены в {currency}', { currency: label }) }}
+          · {{ t('суммы в {currency}, каждая операция — по своему курсу', { currency: label }) }}
         </p>
       </div>
       <div class="acts no-print">

@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  bonusOf, calcStage, categoriesFor, categoryGroups, categoryReport, closingProblems, obligations,
+  bonusOf, calcStage, categoriesFor, categoryGroups, categoryReport, closingProblems,
   otherCurrency, parseMoney, periodRange, periodReport, settingsProblems, splitShares, toBase,
   toObjectCurrency,
   type Category, type Op, type Settings, type Stage,
 } from '../shared/calc.ts'
-import { abilities } from '../shared/roles.ts'
+import { ROLES_ENABLED, abilities } from '../shared/roles.ts'
 
 /** Контрольный пример из раздела 14 ТЗ: «Ресторан, Конибодом», договор 18 000, ставка 10 %. */
 
@@ -29,8 +29,8 @@ const op = (
 ): Op => ({
   id: `op${++seq}`, stageId: 's1', objectId: 'o1', date: '2026-07-13', kind,
   amount, currency: 'USD', rate: 1, amountBase: amount,
-  personId, categoryId: kind === 'exp' ? 'x' : null, note: '', status: 'ok', dueDate: null,
-  isAuto: false, parentId: null, reversesId: null,
+  personId, categoryId: kind === 'exp' ? 'x' : null, note: '', status: 'ok', fx: 12_000,
+  isAuto: false, received: false, receivedAt: null, parentId: null, reversesId: null,
   createdAt: `2026-07-13T00:00:${String(seq).padStart(2, '0')}Z`, createdBy: null, reason: '',
   ...extra,
 })
@@ -46,7 +46,7 @@ const advances = () => [
 test('после первого прихода 8 000', () => {
   const ops = [
     op('in', 800_000),
-    op('exp', bonusOf(800_000, 10), 'ilhom', { isAuto: true, categoryId: 'bonus' }),
+    op('exp', bonusOf(800_000, 10), 'ilhom', { isAuto: true, received: true, categoryId: 'bonus' }),
     ...expenses(), ...advances(),
   ]
   const t = calcStage(stage, ops, shares)
@@ -60,8 +60,8 @@ test('после первого прихода 8 000', () => {
 
 test('после второго прихода 10 000 — итог этапа', () => {
   const ops = [
-    op('in', 800_000), op('exp', bonusOf(800_000, 10), 'ilhom', { isAuto: true, categoryId: 'bonus' }),
-    op('in', 1_000_000), op('exp', bonusOf(1_000_000, 10), 'ilhom', { isAuto: true, categoryId: 'bonus' }),
+    op('in', 800_000), op('exp', bonusOf(800_000, 10), 'ilhom', { isAuto: true, received: true, categoryId: 'bonus' }),
+    op('in', 1_000_000), op('exp', bonusOf(1_000_000, 10), 'ilhom', { isAuto: true, received: true, categoryId: 'bonus' }),
     ...expenses(), ...advances(),
   ]
   const t = calcStage(stage, ops, shares)
@@ -89,27 +89,36 @@ test('сумма долей всегда точно равна чистой до
 
 test('отменённые операции в расчёт не входят', () => {
   const income = op('in', 800_000, null, { status: 'void' })
-  const bonus = op('exp', 80_000, 'ilhom', { status: 'void', isAuto: true })
+  const bonus = op('exp', 80_000, 'ilhom', { status: 'void', isAuto: true, received: true })
   const t = calcStage(stage, [income, bonus], shares)
   assert.equal(t.inc, 0)
   assert.equal(t.exp, 0)
-  assert.equal(t.net, stage.amount)
+  assert.equal(t.net, 0, 'делить нечего: ничего не получено')
 })
 
-test('обязательства не входят в кассу, но видны отдельно', () => {
-  const ops = [
-    op('in', 800_000),
-    op('exp', 50_000, null, { status: 'promised', dueDate: '2026-08-01' }),
-    op('exp', 30_000),
-  ]
-  const t = calcStage(stage, ops, shares)
-  assert.equal(t.exp, 30_000, 'обещанный расход не уменьшает чистую долю')
-  assert.equal(t.cash, 770_000, 'и не трогает кассу')
-  assert.equal(t.promised, 50_000, 'но показан строкой «предстоит выплатить»')
+test('бонус идёт в расчёт только после отметки «получено»', () => {
+  const income = op('in', 800_000)
+  const pending = op('exp', 80_000, 'ilhom', { isAuto: true, categoryId: 'bonus', parentId: income.id })
+  const before = calcStage(stage, [income, pending], shares)
+  assert.equal(before.exp, 0, 'начисленный бонус не в расходах')
+  assert.equal(before.bonus, 0)
+  assert.equal(before.bonusPending, 80_000, 'но виден как «не получен»')
+  assert.equal(before.net, 800_000, 'доли считаются без него')
+  assert.equal(before.cash, 800_000, 'деньги бонуса пока в кассе')
+  assert.ok(closingProblems(stage, before).some(p => /Бонус/.test(p.text)), 'этап с неполученным бонусом не закрыть')
 
-  const list = obligations({ ops, objects: [], stages: [stage] }, '2026-08-05')
-  assert.equal(list.length, 1)
-  assert.ok(list[0]!.overdue, 'срок 01.08 при сегодняшнем 05.08 — просрочено')
+  const after = calcStage(stage, [income, { ...pending, received: true }], shares)
+  assert.equal(after.exp, 80_000)
+  assert.equal(after.bonus, 80_000)
+  assert.equal(after.bonusPending, 0)
+  assert.equal(after.net, 720_000, 'чистая доля = 8 000 − бонус 800')
+})
+
+test('доли считаются от реально полученных денег, а не от суммы этапа', () => {
+  const t = calcStage(stage, [op('in', 800_000), op('exp', 200_000)], shares)
+  assert.equal(t.net, 600_000, 'получено 8 000 − расходы 2 000')
+  assert.deepEqual(t.parts.map(p => p.amount), [450_000, 90_000, 60_000])
+  assert.equal(t.debt, 1_000_000, 'дебиторка по-прежнему от суммы этапа')
 })
 
 test('операция в другой валюте пересчитывается по курсу на дату', () => {
@@ -144,7 +153,7 @@ test('справочники: доли 100 %, ставка до 40 %, шкала
 
 test('отчёт по категориям считает долю бонуса в расходах', () => {
   const ops = [
-    op('exp', 80_000, 'ilhom', { isAuto: true, categoryId: 'bonus' }),
+    op('exp', 80_000, 'ilhom', { isAuto: true, received: true, categoryId: 'bonus' }),
     op('exp', 200_000, null, { categoryId: 'rent' }),
     op('exp', 20_000, null, { categoryId: 'rent' }),
     op('adv', 50_000, 'ilhom'),
@@ -161,7 +170,14 @@ test('отчёт по категориям считает долю бонуса 
   assert.equal(report.rows[0]!.count, 2)
 })
 
-test('права ролей: прораб не видит договор, бонус и доли', () => {
+test('роли выключены: у всех права владельца', () => {
+  assert.equal(ROLES_ENABLED, false)
+  for (const role of ['owner', 'member', 'foreman', 'accountant'] as const) {
+    assert.deepEqual(abilities(role), abilities('owner'), role)
+  }
+})
+
+test.skip('права ролей (когда роли включены): прораб не видит договор, бонус и доли', () => {
   const foreman = abilities('foreman')
   assert.equal(foreman.seeContract, false)
   assert.equal(foreman.seeBonus, false)
@@ -230,7 +246,7 @@ test('сводка за период: разные валюты сводятся
   const line = (id: string, objectId: string, date: string, kind: Op['kind'], amount: number, extra = {}) => ({
     id, stageId: 's', objectId, date, kind, amount, currency: 'USD', rate: 1, amountBase: amount,
     personId: null, categoryId: kind === 'exp' ? 'mat' : null, teamId: null, offObject: false,
-    note: '', status: 'ok', dueDate: null, isAuto: false, parentId: null, reversesId: null,
+    note: '', status: 'ok', fx: 12_000, isAuto: false, received: false, receivedAt: null, parentId: null, reversesId: null,
     createdAt: date, createdBy: null, reason: '', ...extra,
   }) as Op
 

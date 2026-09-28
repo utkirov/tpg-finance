@@ -4,7 +4,10 @@ import { calcStage, operationWarnings, settingsProblems, today, type Op, type St
 import { narrowTotals, visibleOp } from '../shared/visibility.ts'
 import { csvCell, toCsv } from '../shared/csv.ts'
 
-/** Права и проверки, которые раньше обходились: утечки по ролям, обязательства, CSV. */
+/**
+ * Проверки, которые раньше обходились: предупреждения, CSV, доли.
+ * Тесты урезания по ролям помечены skip: роли сейчас выключены (shared/roles.ts, ROLES_ENABLED).
+ */
 
 const shares = [
   { personId: 'ilhom', percent: 75 },
@@ -17,8 +20,8 @@ let seq = 0
 const op = (kind: Op['kind'], amount: number, personId: string | null = null, extra: Partial<Op> = {}): Op => ({
   id: `op${++seq}`, stageId: 's1', objectId: 'o1', date: today(), kind,
   amount, currency: 'USD', rate: 1, amountBase: amount,
-  personId, categoryId: kind === 'exp' ? 'x' : null, teamId: null, offObject: false, note: '', status: 'ok', dueDate: null,
-  isAuto: false, parentId: null, reversesId: null,
+  personId, categoryId: kind === 'exp' ? 'x' : null, teamId: null, offObject: false, note: '', status: 'ok', fx: 12_000,
+  isAuto: false, received: false, receivedAt: null, parentId: null, reversesId: null,
   createdAt: `2026-07-13T00:00:${String(seq).padStart(2, '0')}Z`, createdBy: null, reason: '',
   ...extra,
 })
@@ -43,25 +46,16 @@ test('прораб: предупреждения не выдают приход 
   assert.ok(shown.some(x => /освоено/.test(x.text)), 'владельцу освоение показывается')
 })
 
-test('обещанный аванс занимает долю: второе обещание сверх доли предупреждает', () => {
-  // Доля ulugbek: 15 % от (18 000 − 1 800) = 2 430, выдано 200, осталось 2 230.
-  const promised = [...ops, op('adv', 200_000, 'ulugbek', { status: 'promised' })]
-  const t = calcStage(stage, promised, shares)
-  const w = operationWarnings({ kind: 'adv', amountBase: 50_000, date: today(), personId: 'ulugbek' }, stage, promised, t)
-  assert.ok(w.some(x => /Аванс/.test(x.text)), '2 000 обещано + 500 > 2 230')
-  const ok = operationWarnings({ kind: 'adv', amountBase: 20_000, date: today(), personId: 'ulugbek' }, stage, promised, t)
-  assert.ok(!ok.some(x => /Аванс/.test(x.text)), '2 000 + 200 укладывается')
+test('аванс сверх доли от полученных денег предупреждает', () => {
+  // Получено 8 000, расходы 1 000 (бонус в расчёт не пошёл — не отмечен): чистая 7 000.
+  // Доля ulugbek 15 % = 1 050, выдано 200, осталось 850.
+  const w = operationWarnings({ kind: 'adv', amountBase: 90_000, date: today(), personId: 'ulugbek' }, stage, ops, full)
+  assert.ok(w.some(x => /Аванс/.test(x.text)), '900 > 850')
+  const ok = operationWarnings({ kind: 'adv', amountBase: 80_000, date: today(), personId: 'ulugbek' }, stage, ops, full)
+  assert.ok(!ok.some(x => /Аванс/.test(x.text)), '800 укладывается')
 })
 
-test('проведение обязательства не считает само себя обещанным', () => {
-  const pending = op('adv', 200_000, 'ulugbek', { status: 'promised' })
-  const rest = [...ops, pending]
-  const t = calcStage(stage, rest, shares)
-  const w = operationWarnings({ kind: 'adv', amountBase: 200_000, date: today(), personId: 'ulugbek' }, stage, rest, t, { ignoreId: pending.id })
-  assert.ok(!w.some(x => /Аванс/.test(x.text)))
-})
-
-test('участник: не видит бонус и чужие авансы ни строками, ни суммами', () => {
+test.skip('участник (когда роли включены): не видит бонус и чужие авансы ни строками, ни суммами', () => {
   const visible = ops.filter(o => visibleOp(o, member))
   assert.ok(!visible.some(o => o.isAuto), 'строки бонуса скрыты')
   assert.ok(!visible.some(o => o.kind === 'adv' && o.personId !== 'ulugbek'), 'чужие авансы скрыты')
@@ -72,7 +66,7 @@ test('участник: не видит бонус и чужие авансы н
   assert.equal(t.dueTotal, t.parts[0]!.due)
 })
 
-test('прораб: только касса и свои расходы, без прихода, долга и долей', () => {
+test.skip('прораб (когда роли включены): только касса и свои расходы, без прихода, долга и долей', () => {
   const visible = ops.filter(o => visibleOp(o, foreman))
   assert.ok(visible.every(o => o.kind === 'exp' && !o.isAuto))
   const t = narrowTotals(full, visible, foreman)

@@ -5,13 +5,16 @@ import { objectTeams, stageTeams } from '#shared/plan'
 /** Сколько из плана команды выделено на этот этап и сколько уже потрачено. */
 const props = defineProps<{ stageId: string; objectId: string; editable: boolean }>()
 
-const { state, send } = useFinance()
+const { state, raw, send } = useFinance()
 const { notice } = useAsk()
 const { t } = useT()
 const { m } = useMoney()
 const err = useErr()
 
-const object = computed(() => state.value.objects.find(o => o.id === props.objectId) ?? null)
+// Таблица — в валюте экрана; форма выделения — в валюте учёта объекта (так суммы и хранятся).
+const object = computed(() => raw.value.objects.find(o => o.id === props.objectId) ?? null)
+const rawPlan = computed(() => objectTeams(raw.value, props.objectId))
+const rawRows = computed(() => stageTeams(raw.value, props.stageId))
 const objCurrency = computed(() => object.value?.currency ?? 'USD')
 const objRate = computed(() => object.value?.rate ?? 0)
 
@@ -31,11 +34,11 @@ const form = reactive({ teamId: '', amount: '' })
 const error = ref('')
 const busy = ref(false)
 
-const freeOf = (teamId: string) => plan.value.find(p => p.teamId === teamId)?.unallocated ?? 0
+const freeOf = (teamId: string) => rawPlan.value.find(p => p.teamId === teamId)?.unallocated ?? 0
 
 function open(teamId: string) {
   form.teamId = teamId
-  const row = rows.value.find(r => r.teamId === teamId)
+  const row = rawRows.value.find(r => r.teamId === teamId)
   form.amount = row?.allocated ? money(row.allocated) : ''
   error.value = ''
   editing.value = true

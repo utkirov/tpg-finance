@@ -62,7 +62,15 @@ const TABLE: Record<Role, Abilities> = {
   },
 }
 
+/**
+ * Роли пока выключены: каждый вошедший работает с полными правами владельца.
+ * Таблица выше и все проверки на сервере остаются на месте — чтобы включить
+ * роли обратно, достаточно поставить true.
+ */
+export const ROLES_ENABLED = false
+
 export function abilities(role: Role): Abilities {
+  if (!ROLES_ENABLED) return TABLE.owner
   return TABLE[role] ?? TABLE.foreman
 }
 

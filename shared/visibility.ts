@@ -1,4 +1,4 @@
-import { EMPTY_TOTALS, type Op, type StageTotals } from './calc.ts'
+import { EMPTY_TOTALS, counts, type Op, type StageTotals } from './calc.ts'
 import { abilities, type Role } from './roles.ts'
 
 /**
@@ -36,8 +36,7 @@ export function narrowTotals(full: StageTotals, visible: Op[], user: Viewer): St
     return {
       ...EMPTY_TOTALS,
       cash: full.cash,
-      exp: sum(o => o.status === 'ok'),
-      promised: sum(o => o.status === 'promised'),
+      exp: sum(o => counts(o)),
     }
   }
 
@@ -46,8 +45,8 @@ export function narrowTotals(full: StageTotals, visible: Op[], user: Viewer): St
   return {
     ...full,
     bonus: 0,
-    adv: sum(o => o.status === 'ok' && o.kind === 'adv'),
-    promised: sum(o => o.status === 'promised'),
+    bonusPending: 0,
+    adv: sum(o => counts(o) && o.kind === 'adv'),
     parts: mine,
     dueTotal: mine.reduce((a, p) => a + p.due, 0),
   }

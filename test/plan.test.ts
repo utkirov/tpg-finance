@@ -24,7 +24,7 @@ const op = (kind: Op['kind'], amount: number, extra: Partial<Op> = {}): Op => ({
   id: `op${++seq}`, stageId: 's1', objectId: 'o1', date: '2026-07-13', kind,
   amount, currency: 'USD', rate: 1, amountBase: amount,
   personId: null, categoryId: kind === 'exp' ? 'x' : null, teamId: null, offObject: false,
-  note: '', status: 'ok', dueDate: null, isAuto: false, parentId: null, reversesId: null,
+  note: '', status: 'ok', fx: 12_000, isAuto: false, received: false, receivedAt: null, parentId: null, reversesId: null,
   createdAt: `2026-07-13T00:00:${String(seq).padStart(2, '0')}Z`, createdBy: null, reason: '',
   ...extra,
 })
@@ -105,7 +105,7 @@ test('расход не по объекту не уменьшает чистую
   const t = calcStage(stage, ops, shares)
   assert.equal(t.exp, 100_000, 'в расходы этапа попал только прямой расход')
   assert.equal(t.adv, 50_000, 'расход не по объекту учтён авансом участнику')
-  assert.equal(t.net, 1_700_000, 'чистая доля уменьшилась только на прямой расход')
+  assert.equal(t.net, 700_000, 'чистая доля = получено 8 000 − прямой расход 1 000')
   assert.equal(t.cash, 650_000, 'а касса — на оба')
 })
 
@@ -168,7 +168,6 @@ test('карточка человека: сколько получил, скол
     allocations: [{ stageId: 's1', teamId: 'arch', amount: 200_000 }],
     ops: [
       op('exp', 120_000, { personId: 'shuhrat', teamId: 'arch' }),
-      op('exp', 80_000, { personId: 'shuhrat', teamId: 'arch', status: 'promised', dueDate: '2026-10-05' }),
     ],
   } as never
 
@@ -177,7 +176,8 @@ test('карточка человека: сколько получил, скол
   assert.equal(plan.expected, 200_000, 'с архитекторами договорились на 2 000')
   assert.equal(plan.paid, 120_000, 'выплачено 1 200')
   assert.equal(plan.left, 80_000, 'не получено 800')
-  assert.equal(plan.next?.dueDate, '2026-10-05', 'срок взят из обязательства')
+  assert.equal(plan.next?.stageNumber, 1, 'следующие деньги — с этапа 1, где команде ещё выделено')
+  assert.equal(plan.next?.amount, 80_000)
   assert.equal(plan.rows[0]!.objectName, 'Ресторан')
 
   // Дольщик считается по доле, а не по плану команды.

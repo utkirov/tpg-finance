@@ -12,8 +12,8 @@ import type { Me, Role } from './roles.ts'
 import type { Allocation, Budget, Team } from './plan.ts'
 
 export type Kind = 'in' | 'exp' | 'adv'
-/** обещано — договорились, но деньги не выданы; в кассу не входит. */
-export type OpStatus = 'ok' | 'void' | 'promised'
+/** Записи только проведённые и отменённые (сторно). Обещаний нет. */
+export type OpStatus = 'ok' | 'void'
 export type StageStatus = 'draft' | 'work' | 'check' | 'closed'
 export type BasisType = 'договор' | 'расписка' | 'устно'
 
@@ -31,12 +31,9 @@ export const STAGE_NAME: Record<StageStatus, string> = {
 export const OP_STATUS_NAME: Record<OpStatus, string> = {
   ok: 'проведено',
   void: 'отменено',
-  promised: 'обещано',
 }
 export const BONUS_CAT = 'bonus'
 export const MAX_BONUS_RATE = 40
-/** За сколько дней до срока обязательства напоминать. */
-export const REMIND_DAYS = 3
 
 export interface Person {
   id: string
@@ -132,6 +129,11 @@ export interface Obj {
   address: string
   contractAmount: number
   currency: string
+  /**
+   * Валюта учёта объекта. Заполняется только в состоянии для показа
+   * (см. shared/display.ts), где currency уже заменена валютой экрана.
+   */
+  bookCurrency?: string
   /** Курс объекта: сколько сумов за доллар. Ноль — не задан. */
   rate: number
   basisType: BasisType
@@ -165,6 +167,12 @@ export interface Op {
   currency: string
   /** Курс к валюте объекта на дату операции. */
   rate: number
+  /**
+   * Курс доллара на дату операции: сколько сумов за 1 USD.
+   * По нему операция пересчитывается при показе в другой валюте —
+   * у каждой записи свой курс, а не один справочный на всё.
+   */
+  fx: number
   /** Сумма в валюте объекта — то, чем считают. */
   amountBase: number
   personId: string | null
@@ -175,8 +183,10 @@ export interface Op {
   offObject: boolean
   note: string
   status: OpStatus
-  dueDate: string | null
   isAuto: boolean
+  /** Строка бонуса: получатель деньги получил. Пока нет — в расчёт не идёт. */
+  received: boolean
+  receivedAt: string | null
   parentId: string | null
   reversesId: string | null
   createdAt: string
@@ -237,13 +247,14 @@ export interface StageTotals {
   inc: number
   exp: number
   adv: number
+  /** Бонус, отмеченный полученным: он в расходах. */
   bonus: number
+  /** Бонус начислен, но не получен: в расходы и доли не входит, деньги ещё в кассе. */
+  bonusPending: number
   net: number
   cash: number
   debt: number
   usage: number
-  /** Обязательства: обещано, но не выдано. В кассу не входит. */
-  promised: number
   parts: SharePart[]
   dueTotal: number
 }
@@ -393,14 +404,27 @@ export function stageOps(ops: Op[], stageId: string): Op[] {
   return ops.filter(o => o.stageId === stageId)
 }
 
+/**
+ * Идёт ли запись в расчёт: проведена, а если это бонус — получен.
+ * Начисленный, но не полученный бонус виден в ленте, но деньги пока в кассе.
+ */
+export function counts(o: Op): boolean {
+  return o.status === 'ok' && (!o.isAuto || !!o.received)
+}
+
+/**
+ * Показатели этапа. Доли считаются от реально полученных денег:
+ * чистая доля = приход − расходы. Пока заказчик заплатил часть,
+ * делится только то, что пришло.
+ */
 export function calcStage(stage: Stage, ops: Op[], shares: Share[]): StageTotals {
   const all = stageOps(ops, stage.id)
-  const live = all.filter(o => o.status === 'ok')
+  const live = all.filter(counts)
   const sum = (k: Kind) => live.reduce((a, o) => a + (o.kind === k ? base(o) : 0), 0)
   const inc = sum('in')
   const exp = sum('exp')
   const adv = sum('adv')
-  const net = stage.amount - exp
+  const net = inc - exp
 
   const parts: SharePart[] = splitShares(net, shares).map(p => {
     const paid = live.reduce((a, o) => a + (o.kind === 'adv' && o.personId === p.personId ? base(o) : 0), 0)
@@ -412,11 +436,11 @@ export function calcStage(stage: Stage, ops: Op[], shares: Share[]): StageTotals
     exp,
     adv,
     bonus: live.reduce((a, o) => a + (o.isAuto ? base(o) : 0), 0),
+    bonusPending: all.reduce((a, o) => a + (o.isAuto && o.status === 'ok' && !o.received ? base(o) : 0), 0),
     net,
     cash: inc - exp - adv,
     debt: stage.amount - inc,
     usage: inc > 0 ? (exp + adv) / inc : 0,
-    promised: all.reduce((a, o) => a + (o.status === 'promised' ? base(o) : 0), 0),
     parts,
     dueTotal: parts.reduce((a, p) => a + p.due, 0),
   }
@@ -433,8 +457,8 @@ export function sharesFor(state: Pick<AppState, 'settings' | 'sharesByVersion'>,
 }
 
 export const EMPTY_TOTALS: StageTotals = {
-  inc: 0, exp: 0, adv: 0, bonus: 0, net: 0, cash: 0, debt: 0,
-  usage: 0, promised: 0, parts: [], dueTotal: 0,
+  inc: 0, exp: 0, adv: 0, bonus: 0, bonusPending: 0, net: 0, cash: 0, debt: 0,
+  usage: 0, parts: [], dueTotal: 0,
 }
 
 /** Показатели этапа — из того, что прислал сервер с учётом роли. */
@@ -445,7 +469,7 @@ export function totalsOf(state: Pick<AppState, 'totals'>, stageId: string): Stag
 /** Сводка по объекту — сумма его этапов, уже урезанных по роли. */
 export function objectTotals(state: Pick<AppState, 'totals' | 'stages'>, objectId: string) {
   const list = stagesOf(state.stages, objectId)
-  const t = { inc: 0, exp: 0, adv: 0, cash: 0, debt: 0, planned: 0, promised: 0, usage: 0, stages: list }
+  const t = { inc: 0, exp: 0, adv: 0, cash: 0, debt: 0, planned: 0, bonus: 0, bonusPending: 0, usage: 0, stages: list }
   for (const st of list) {
     const c = totalsOf(state, st.id)
     t.inc += c.inc
@@ -454,7 +478,8 @@ export function objectTotals(state: Pick<AppState, 'totals' | 'stages'>, objectI
     t.cash += c.cash
     t.debt += c.debt
     t.planned += st.amount
-    t.promised += c.promised
+    t.bonus += c.bonus
+    t.bonusPending += c.bonusPending
   }
   t.usage = t.inc > 0 ? (t.exp + t.adv) / t.inc : 0
   return t
@@ -462,7 +487,7 @@ export function objectTotals(state: Pick<AppState, 'totals' | 'stages'>, objectI
 
 export function calcObject(obj: Obj, stages: Stage[], ops: Op[], shares: Share[]) {
   const list = stagesOf(stages, obj.id)
-  const t = { inc: 0, exp: 0, adv: 0, cash: 0, debt: 0, planned: 0, promised: 0, usage: 0, stages: list }
+  const t = { inc: 0, exp: 0, adv: 0, cash: 0, debt: 0, planned: 0, usage: 0, stages: list }
   for (const st of list) {
     const c = calcStage(st, ops, shares)
     t.inc += c.inc
@@ -471,7 +496,6 @@ export function calcObject(obj: Obj, stages: Stage[], ops: Op[], shares: Share[]
     t.cash += c.cash
     t.debt += c.debt
     t.planned += st.amount
-    t.promised += c.promised
   }
   t.usage = t.inc > 0 ? (t.exp + t.adv) / t.inc : 0
   return t
@@ -484,49 +508,18 @@ export function calcObject(obj: Obj, stages: Stage[], ops: Op[], shares: Share[]
  */
 export function closingProblems(stage: Stage, totals: StageTotals): Note[] {
   const out: Note[] = []
-  const identity = stage.amount - (totals.exp + totals.parts.reduce((a, p) => a + p.amount, 0))
-  if (identity !== 0) out.push({ text: 'Равенство закрытия не сходится на {amount}.', params: { amount: money(identity) } })
   if (totals.debt !== 0) out.push({ text: 'Заказчик ещё должен {amount}.', params: { amount: money(totals.debt) } })
+  if (totals.bonusPending !== 0) {
+    out.push({ text: 'Бонус {amount} не отмечен полученным.', params: { amount: money(totals.bonusPending) } })
+  }
   if (totals.cash !== 0) {
     out.push({
       text: 'В кассе этапа {amount} — к доплате участникам {due}.',
       params: { amount: money(totals.cash), due: money(totals.dueTotal) },
     })
   }
-  if (totals.promised !== 0) out.push({ text: 'Не закрыто обязательств на {amount}.', params: { amount: money(totals.promised) } })
   return out
 }
-
-/* ---------- обязательства ---------- */
-
-export interface Obligation {
-  op: Op
-  objectName: string
-  stageNumber: number
-  daysLeft: number | null
-  overdue: boolean
-  soon: boolean
-}
-
-/** Предстоящие выплаты: всё, о чём договорились, но не выдали. */
-export function obligations(state: Pick<AppState, 'ops' | 'objects' | 'stages'>, from = today()): Obligation[] {
-  return state.ops
-    .filter(o => o.status === 'promised')
-    .map((op) => {
-      const daysLeft = op.dueDate ? daysBetween(from, op.dueDate) : null
-      return {
-        op,
-        objectName: state.objects.find(o => o.id === op.objectId)?.name ?? '',
-        stageNumber: state.stages.find(s => s.id === op.stageId)?.number ?? 0,
-        daysLeft,
-        overdue: daysLeft != null && daysLeft < 0,
-        soon: daysLeft != null && daysLeft >= 0 && daysLeft <= REMIND_DAYS,
-      }
-    })
-    .sort((a, b) => (a.op.dueDate ?? '9999').localeCompare(b.op.dueDate ?? '9999'))
-}
-
-/* ---------- отчёты ---------- */
 
 export interface CategoryRow { categoryId: string; name: string; amount: number; count: number; share: number }
 
@@ -537,7 +530,7 @@ export function categoryReport(
 ): { rows: CategoryRow[]; total: number; bonus: number } {
   const picked = state.ops.filter(o =>
     o.kind === 'exp'
-    && o.status === 'ok'
+    && counts(o)
     && (!filter.objectId || o.objectId === filter.objectId)
     && (!filter.from || o.date >= filter.from)
     && (!filter.to || o.date <= filter.to))
@@ -568,7 +561,10 @@ export function categoryReport(
 export interface PersonObjectRow {
   objectId: string
   objectName: string
+  /** Бонусы, отмеченные полученными. */
   bonuses: number
+  /** Бонусы начислены, но ещё не получены. */
+  bonusesPending: number
   advances: number
   accrued: number
   due: number
@@ -577,6 +573,7 @@ export interface PersonObjectRow {
 
 export interface PersonSummary {
   bonuses: number
+  bonusesPending: number
   advances: number
   accrued: number
   due: number
@@ -594,6 +591,7 @@ export function personSummary(state: Pick<AppState, 'ops' | 'objects' | 'stages'
       objectId: obj.id,
       objectName: obj.name,
       bonuses: 0,
+      bonusesPending: 0,
       advances: 0,
       accrued: 0,
       due: 0,
@@ -602,7 +600,8 @@ export function personSummary(state: Pick<AppState, 'ops' | 'objects' | 'stages'
 
     for (const op of state.ops) {
       if (op.objectId !== obj.id || op.status !== 'ok' || op.personId !== personId) continue
-      if (op.isAuto) row.bonuses += base(op)
+      // Бонус считается на руках, только когда отмечен полученным.
+      if (op.isAuto) { if (op.received) row.bonuses += base(op); else row.bonusesPending += base(op) }
       else if (op.kind === 'adv') row.advances += base(op)
       else if (op.kind === 'exp') row.payouts += base(op)
     }
@@ -615,12 +614,13 @@ export function personSummary(state: Pick<AppState, 'ops' | 'objects' | 'stages'
       }
     }
 
-    if (row.bonuses || row.advances || row.accrued || row.payouts) rows.push(row)
+    if (row.bonuses || row.bonusesPending || row.advances || row.accrued || row.payouts) rows.push(row)
   }
 
   const total = (pick: keyof PersonObjectRow) => rows.reduce((a, r) => a + (r[pick] as number), 0)
   return {
     bonuses: total('bonuses'),
+    bonusesPending: total('bonusesPending'),
     advances: total('advances'),
     accrued: total('accrued'),
     due: total('due'),
@@ -632,7 +632,7 @@ export function personSummary(state: Pick<AppState, 'ops' | 'objects' | 'stages'
 /** Авансы, выданные участнику внутри этапа — строки для акта сверки. */
 export function advancesOf(ops: Op[], stageId: string, personId: string): Op[] {
   return stageOps(ops, stageId)
-    .filter(o => o.kind === 'adv' && o.status === 'ok' && o.personId === personId)
+    .filter(o => o.kind === 'adv' && counts(o) && o.personId === personId)
     .sort((a, b) => a.date.localeCompare(b.date))
 }
 
@@ -680,30 +680,22 @@ export function settingsProblems(s: Pick<Settings, 'shares' | 'bonusScale'>): No
  * revealIncome: false — для ролей, которым приход объекта не показывают (прораб).
  * Предупреждения «нет прихода» и «освоено N %» считаются от прихода: отдав их,
  * сервер позволил бы подбором суммы вычислить приход, не сохраняя ни одной записи.
- *
- * Обещанные авансы тоже занимают долю: аванс, оформленный обязательством,
- * сравнивается с тем, что осталось после уже обещанного.
  */
 export function operationWarnings(
   draft: { kind: Kind; amountBase: number; date: string; personId: string | null },
   stage: Stage,
   ops: Op[],
   totals: StageTotals,
-  { revealIncome = true, ignoreId = '' }: { revealIncome?: boolean; ignoreId?: string } = {},
+  { revealIncome = true }: { revealIncome?: boolean } = {},
 ): Note[] {
   const out: Note[] = []
-  const own = stageOps(ops, stage.id).filter(o => o.id !== ignoreId)
+  const own = stageOps(ops, stage.id)
   if (draft.kind === 'adv') {
     const part = totals.parts.find(p => p.personId === draft.personId)
-    const promisedToHim = own.reduce(
-      (a, o) => a + (o.status === 'promised' && o.kind === 'adv' && o.personId === draft.personId ? base(o) : 0),
-      0,
-    )
-    const left = part ? part.due - promisedToHim : 0
-    if (part && draft.amountBase > left) {
+    if (part && draft.amountBase > part.due) {
       out.push({
         text: 'Аванс {amount} больше, чем причитается участнику ({due}).',
-        params: { amount: money(draft.amountBase), due: money(left) },
+        params: { amount: money(draft.amountBase), due: money(part.due) },
       })
     }
   }
@@ -808,7 +800,7 @@ export function periodReport(
   let count = 0
 
   for (const op of state.ops) {
-    if (op.status !== 'ok') continue
+    if (!counts(op)) continue
     if (range.objectId && op.objectId !== range.objectId) continue
     if (from && op.date < from) continue
     if (to && op.date > to) continue

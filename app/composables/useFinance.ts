@@ -1,4 +1,5 @@
-import { DEFAULT_DISPLAY_RATE, type AppState, type Settings } from '#shared/calc'
+import { DEFAULT_DISPLAY_RATE, type AppState, type CurrencyCode, type Settings } from '#shared/calc'
+import { inCurrency } from '#shared/display'
 import { abilities, type Abilities } from '#shared/roles'
 
 const emptySettings = (): Settings => ({
@@ -13,7 +14,18 @@ export const emptyState = (): ClientState => ({
   me: null, settings: emptySettings(), sharesByVersion: {},
   clients: [], teams: [], budgets: [], allocations: [],
   objects: [], stages: [], ops: [], attachments: [], users: [], totals: {},
+  archived: { people: [], categories: [] },
 })
+
+/** Валюта экрана: переключатель USD / SUM в шапке. Хранится в куке — её видит и сервер при отрисовке. */
+export function useShown() {
+  return useCookie<CurrencyCode>('money', {
+    default: () => 'USD',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 365 * 86400,
+  })
+}
 
 /**
  * Одно состояние на всё приложение. Показатели приходят с сервера уже
@@ -41,7 +53,16 @@ export function useFinance() {
     }
   }
 
-  const state = computed(() => data.value)
+  const shown = useShown()
+
+  /** Как пришло с сервера: в валюте учёта каждого объекта. Для форм редактирования. */
+  const raw = computed(() => data.value)
+  /**
+   * Для экрана: каждая операция пересчитана в валюту экрана по своему курсу,
+   * показатели и доли посчитаны заново из пересчитанных строк (shared/display.ts).
+   */
+  const state = computed<ClientState>(() =>
+    data.value.me ? { ...inCurrency(data.value, shown.value), mustChange: data.value.mustChange } : data.value)
   const me = computed(() => data.value.me)
   const settings = computed(() => data.value.settings)
   const can = computed<Abilities>(() => abilities(me.value?.role ?? 'foreman'))
@@ -54,22 +75,26 @@ export function useFinance() {
   const categoryName = (id: string | null) =>
     (settings.value.categories.find(c => c.id === id)
       ?? data.value.archived?.categories.find(c => c.id === id))?.name ?? '—'
-  const objectById = (id: string) => data.value.objects.find(o => o.id === id) ?? null
-  const stageById = (id: string) => data.value.stages.find(s => s.id === id) ?? null
+  const objectById = (id: string) => state.value.objects.find(o => o.id === id) ?? null
+  const stageById = (id: string) => state.value.stages.find(s => s.id === id) ?? null
+  /** Объект и этап в валюте учёта — для форм, где суммы вводят и правят. */
+  const rawObjectById = (id: string) => data.value.objects.find(o => o.id === id) ?? null
+  const rawStageById = (id: string) => data.value.stages.find(s => s.id === id) ?? null
   const filesOf = (opId: string) => data.value.attachments.filter(a => a.operationId === opId)
   const teamName = (id: string | null) => data.value.teams.find(x => x.id === id)?.name ?? '—'
   const clientById = (id: string | null) => data.value.clients.find(c => c.id === id) ?? null
 
   /** Любая запись на сервере — и сразу перечитанное состояние. */
   async function send<T>(url: string, options: { method: 'POST' | 'PUT' | 'DELETE'; body?: unknown }): Promise<T> {
-    const result = await $fetch<T>(url, options as never)
+    const result = (await $fetch<T>(url, options as never)) as T
     await refresh()
     return result
   }
 
   return {
-    state, me, settings, can, loading, loaded,
-    refresh, send, personName, categoryName, teamName, objectById, stageById, clientById, filesOf,
+    state, raw, me, settings, can, loading, loaded,
+    refresh, send, personName, categoryName, teamName, objectById, stageById, rawObjectById, rawStageById,
+    clientById, filesOf,
   }
 }
 

@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ROLE_NAME } from '#shared/roles'
+import { ROLES_ENABLED, ROLE_NAME } from '#shared/roles'
 import type { Lang } from '#shared/i18n'
 import { currencyIcon, currencyLabel } from '#shared/calc'
 
 const route = useRoute()
 const { me, can, state, objectById, stageById } = useFinance()
 const { t, lang, LANGS } = useT()
-const { shown, rate, CURRENCIES, converted } = useMoney()
+const { shown, CURRENCIES } = useMoney()
+// Есть объекты, которые ведутся не в валюте экрана: скажем, как пересчитано.
+const converted = computed(() => state.value.objects.some(o => o.bookCurrency && o.bookCurrency !== shown.value))
 
 // Маршрут роутера, а не useRoute(): тот в app.vue меняется только когда новая
 // страница отрисована внутри <NuxtPage>. После входа новая страница рисовалась
@@ -24,7 +26,6 @@ useHead({
 const links = computed(() => {
   const out = [{ to: '/', label: 'Объекты', icon: 'ph:buildings' }]
   if (can.value.seeContract) out.push({ to: '/clients', label: 'Клиенты', icon: 'ph:identification-card' })
-  out.push({ to: '/obligations', label: 'Выплаты', icon: 'ph:clock-countdown' })
   if (can.value.seeAllShares) out.push({ to: '/reports', label: 'Отчёты', icon: 'ph:chart-bar' })
   if (can.value.seeAllShares) out.push({ to: '/people', label: 'Люди', icon: 'ph:users-three' })
   if (can.value.manage) out.push({ to: '/settings', label: 'Справочники', icon: 'ph:gear-six' })
@@ -93,7 +94,7 @@ const showCrumbs = computed(() => crumbs.value.length > 0 && !route.path.endsWit
               class="seg-sm"
               role="group"
               :aria-label="t('Валюта показа')"
-              :title="t('Пересчёт по курсу {rate} — только для показа', { rate: rate.toLocaleString('ru-RU') })"
+              :title="t('Показ в этой валюте: каждая операция по своему курсу')"
             >
               <button
                 v-for="c in CURRENCIES"
@@ -125,7 +126,7 @@ const showCrumbs = computed(() => crumbs.value.length > 0 && !route.path.endsWit
               <Icon name="ph:user-circle" />
               <span>
                 <b>{{ me?.name }}</b>
-                {{ me ? t(ROLE_NAME[me.role]) : '' }}
+                <template v-if="ROLES_ENABLED">{{ me ? t(ROLE_NAME[me.role]) : '' }}</template>
               </span>
             </NuxtLink>
           </div>
@@ -142,12 +143,9 @@ const showCrumbs = computed(() => crumbs.value.length > 0 && !route.path.endsWit
         </nav>
 
         <p v-if="converted" class="hint no-print" style="margin-top: 12px">
-          {{ t('Показ в {currency} по курсу {rate} · учёт в {base}', {
+          {{ t('Показ в {currency}: каждая операция — по курсу на свою дату, договор и этапы — по курсу объекта.', {
             currency: currencyLabel(shown),
-            rate: rate.toLocaleString('ru-RU'),
-            base: currencyLabel(state.settings.currency),
           }) }}
-          <NuxtLink v-if="can.manage" to="/settings">{{ t('изменить курс') }}</NuxtLink>
         </p>
 
         <div v-if="state.mustChange" class="note g no-print" style="margin-top: 14px">

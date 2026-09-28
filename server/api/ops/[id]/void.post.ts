@@ -28,7 +28,6 @@ export default defineEventHandler(async (event) => {
         id: uid(),
         date: today(),
         status: 'void',
-        dueDate: null,
         reversesId: src.id,
         parentId: null,
         reason: why,

@@ -1,20 +1,23 @@
 <script setup lang="ts">
 import {
-  KIND_NAME, OP_STATUS_NAME, closingProblems, currencyLabel, dmy, formatMoney, percent, stageOps, totalsOf,
+  KIND_NAME, OP_STATUS_NAME, closingProblems, dmy, formatMoney, percent, stageOps, totalsOf,
   type Note, type Op, type StageStatus,
 } from '#shared/calc'
 
 import { stageProgress } from '#shared/plan'
 
 const route = useRoute()
-const { state, can, stageById, objectById, personName, categoryName, teamName, filesOf, send } = useFinance()
+const { state, can, stageById, objectById, rawStageById, rawObjectById, personName, categoryName, teamName, filesOf, send } = useFinance()
 const { ask, notice } = useAsk()
 const { t } = useT()
 const err = useErr()
 
 const stage = computed(() => stageById(String(route.params.id)))
 const object = computed(() => (stage.value ? objectById(stage.value.objectId) : null))
-const { m } = useMoney(() => object.value?.currency)
+// Формы вводят суммы в валюте учёта объекта — им нужны исходные данные, а не пересчёт для экрана.
+const rawStage = computed(() => rawStageById(String(route.params.id)))
+const rawObject = computed(() => (stage.value ? rawObjectById(stage.value.objectId) : null))
+const { m, code: shownCode } = useMoney()
 const totals = computed(() => (stage.value ? totalsOf(state.value, stage.value.id) : null))
 
 const entering = ref(false)
@@ -60,9 +63,18 @@ const kpis = computed(() => {
       label: t('Расходы этапа'),
       icon: 'ph:receipt',
       value: m(c.exp),
-      sub: can.value.seeBonus ? t('в т. ч. бонус {amount}', { amount: m(c.bonus) }) : t('по всем категориям'),
+      sub: can.value.seeBonus ? t('в т. ч. полученный бонус {amount}', { amount: m(c.bonus) }) : t('по всем категориям'),
     },
-    { label: t('Чистая доля'), icon: 'ph:chart-pie-slice', value: m(c.net), sub: t('делится между участниками') },
+    { label: t('Чистая доля'), icon: 'ph:chart-pie-slice', value: m(c.net), sub: t('получено − расходы, делится между участниками') },
+    ...(c.bonusPending
+      ? [{
+          label: t('Бонус не получен'),
+          icon: 'ph:star',
+          value: m(c.bonusPending),
+          sub: t('в расчёт не идёт, пока не отмечен'),
+          tone: 'warn' as const,
+        }]
+      : []),
   ]
 })
 
@@ -87,11 +99,14 @@ const problems = computed<Note[]>(() => {
 /* ---------- лента ---------- */
 
 const allOps = computed(() => (stage.value ? stageOps(state.value.ops, stage.value.id) : []))
-const promised = computed(() => allOps.value.filter(o => o.status === 'promised'))
+
+// Сторно и отменённые записи в расчёт не входят и по умолчанию скрыты: лента — про живые деньги.
+const showVoid = ref(false)
+const voidCount = computed(() => allOps.value.filter(o => o.status === 'void').length)
 
 const rows = computed(() =>
   allOps.value
-    .filter(o => o.status !== 'promised')
+    .filter(o => showVoid.value || o.status !== 'void')
     .filter(o => (!filter.kind || o.kind === filter.kind)
       && (!filter.categoryId || o.categoryId === filter.categoryId)
       && (!filter.personId || o.personId === filter.personId))
@@ -111,14 +126,17 @@ function opLabel(op: Op): string {
 
 function opNotes(op: Op): string[] {
   const out: string[] = []
-  if (op.isAuto && !op.reversesId) out.push(t('создано автоматически с прихода'))
+  if (op.isAuto && !op.reversesId) {
+    out.push(op.received
+      ? t('бонус получен {date}', { date: dmy(op.receivedAt) })
+      : t('бонус начислен, не получен — в расчёт не идёт'))
+  }
   if (op.note) out.push(op.note)
-  if (op.currency !== object.value?.currency) {
-    // Здесь показываем ровно то, что записали: сумму в валюте операции.
-    out.push(t('{amount} {currency} по курсу {rate}', {
+  if (op.currency !== shownCode.value) {
+    // Как записали: сумма в валюте операции и курс доллара на её дату.
+    out.push(t('записано {amount} · курс {fx}', {
       amount: formatMoney(op.amount, op.currency),
-      currency: currencyLabel(op.currency),
-      rate: op.rate,
+      fx: op.fx ? op.fx.toLocaleString('ru-RU') : '—',
     }))
   }
   if (op.reversesId) out.push(t('сторно') + (op.reason ? `: ${op.reason}` : ''))
@@ -169,8 +187,22 @@ async function voidOp(op: Op) {
   }
 }
 
-const settleOp = useSettle()
-const settle = (op: Op) => settleOp(op, opLabel(op))
+/** Бонус получен / снять отметку. Пока не получен — в расходы и доли не идёт. */
+async function toggleBonus(op: Op) {
+  const received = !op.received
+  const go = await ask({
+    title: received ? t('Бонус получен') : t('Снять отметку «получен»'),
+    body: received
+      ? t('{name} — {amount}. Бонус войдёт в расходы этапа и уменьшит чистую долю.', { name: personName(op.personId), amount: m(op.amountBase) })
+      : t('Бонус выйдет из расходов этапа, деньги снова будут числиться в кассе.'),
+  })
+  if (!go) return
+  try {
+    await send(`/api/ops/${op.id}/bonus`, { method: 'POST', body: { received } })
+  } catch (e) {
+    await notice(t('Не получилось'), err(e))
+  }
+}
 </script>
 
 <template>
@@ -247,34 +279,6 @@ const settle = (op: Op) => settleOp(op, opLabel(op))
       </div>
     </div>
 
-    <section v-if="promised.length" class="sect">
-      <h2>{{ t('Предстоит выплатить') }} · {{ m(totals.promised) }}</h2>
-      <div class="tw">
-        <table class="stack">
-          <thead>
-            <tr>
-              <th>{{ t('Срок') }}</th><th>{{ t('Обязательство') }}</th><th class="n">{{ t('Сумма') }}</th><th class="no-print" />
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="op in promised" :key="op.id" class="promised">
-              <td class="n" :data-label="t('Срок')">{{ op.dueDate ? dmy(op.dueDate) : t('без срока') }}</td>
-              <td class="desc">
-                <b>{{ opLabel(op) }}</b>
-                <small v-if="op.note">{{ op.note }}</small>
-              </td>
-              <td class="n" :data-label="t('Сумма')">{{ m(op.amountBase) }}</td>
-              <td class="act no-print">
-                <button v-if="can.write && !locked" type="button" class="btn sm" @click="settle(op)">
-                  <Icon name="ph:check-circle" />{{ t('Выплачено') }}
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
     <section v-if="can.seeOwnShare" class="sect">
       <h2>{{ can.seeAllShares ? t('Доли участников') : t('Моя доля') }}</h2>
       <div class="tw">
@@ -325,7 +329,7 @@ const settle = (op: Op) => settleOp(op, opLabel(op))
           <ul><li v-for="p in problems" :key="p.text">{{ t(p.text, p.params) }}</li></ul>
         </template>
         <template v-else>
-          {{ t('Сумма этапа = расходы + доли. Дебиторка ноль, касса ноль — этап можно закрыть.') }}
+          {{ t('Дебиторка ноль, бонус получен, касса ноль — этап можно закрыть.') }}
         </template>
       </div>
     </div>
@@ -340,6 +344,17 @@ const settle = (op: Op) => settleOp(op, opLabel(op))
     <section class="sect">
       <div class="sect-head">
         <h2>{{ t('Операции') }} · {{ rows.length }}</h2>
+        <button
+          v-if="voidCount"
+          type="button"
+          class="btn sm no-print"
+          :class="{ tonal: showVoid }"
+          :aria-pressed="showVoid"
+          @click="showVoid = !showVoid"
+        >
+          <Icon name="ph:arrow-counter-clockwise" />
+          {{ showVoid ? t('Скрыть сторно') : t('Показать сторно · {count}', { count: voidCount }) }}
+        </button>
       </div>
 
       <div class="filters no-print">
@@ -380,11 +395,12 @@ const settle = (op: Op) => settleOp(op, opLabel(op))
             </tr>
           </thead>
           <tbody>
-            <tr v-for="op in rows" :key="op.id" :class="{ auto: op.isAuto, void: op.status === 'void' }">
+            <tr v-for="op in rows" :key="op.id" :class="{ auto: op.isAuto, void: op.status === 'void', pending: op.isAuto && !op.received }">
               <td class="n" :data-label="t('Дата')">{{ dmy(op.date) }}</td>
               <td class="desc">
                 <b>{{ opLabel(op) }}</b>
                 <span v-if="op.isAuto" class="pill g">{{ t('бонус') }}</span>
+                <span v-if="op.isAuto && op.status === 'ok' && !op.received" class="pill m">{{ t('не получен') }}</span>
                 <span v-if="op.offObject" class="pill m">{{ t('не по объекту') }}</span>
                 <span v-if="op.status === 'void'" class="pill m">{{ t(OP_STATUS_NAME[op.status]) }}</span>
                 <small v-if="opNotes(op).length">{{ opNotes(op).join(' · ') }}</small>
@@ -406,6 +422,15 @@ const settle = (op: Op) => settleOp(op, opLabel(op))
                 {{ op.kind === 'in' ? '+' : '−' }}{{ m(op.amountBase) }}
               </td>
               <td class="act no-print">
+                <button
+                  v-if="can.write && op.isAuto && op.status === 'ok' && !locked"
+                  type="button"
+                  class="btn sm"
+                  :class="{ tonal: !op.received }"
+                  @click="toggleBonus(op)"
+                >
+                  <Icon :name="op.received ? 'ph:x' : 'ph:check-circle'" />{{ op.received ? t('Не получен') : t('Получено') }}
+                </button>
                 <button
                   v-if="can.manage && op.status === 'ok' && !op.isAuto"
                   type="button"
@@ -432,8 +457,8 @@ const settle = (op: Op) => settleOp(op, opLabel(op))
       <span class="fab-label">{{ t('Операция') }}</span>
     </button>
 
-    <OpForm :open="entering" :stage="stage" :object="object" @close="entering = false" />
-    <StageForm :open="editing" :object="object" :stage="stage" @close="editing = false" />
+    <OpForm v-if="rawStage && rawObject" :open="entering" :stage="rawStage" :object="rawObject" @close="entering = false" />
+    <StageForm v-if="rawStage && rawObject" :open="editing" :object="rawObject" :stage="rawStage" @close="editing = false" />
   </div>
 
   <div v-else class="empty">

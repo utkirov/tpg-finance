@@ -3,16 +3,19 @@ import {
   currencyLabel, formatMoney, objectTotals, otherCurrency, sharesFor, toObjectCurrency, totalsOf,
 } from '#shared/calc'
 import { objectForecast, stageProgress } from '#shared/plan'
+import { ROLES_ENABLED } from '#shared/roles'
 
 const route = useRoute()
 const router = useRouter()
-const { state, can, objectById, personName, send } = useFinance()
+const { state, can, objectById, rawObjectById, personName, send } = useFinance()
 const { ask, notice } = useAsk()
 const { t } = useT()
 const err = useErr()
 
 const object = computed(() => objectById(String(route.params.id)))
-const { m, m0 } = useMoney(() => object.value?.currency)
+/** В валюте учёта — для формы правки объекта. */
+const rawObject = computed(() => rawObjectById(String(route.params.id)))
+const { m, m0 } = useMoney()
 const editing = ref(false)
 const addingStage = ref(false)
 const savingAccess = ref(false)
@@ -52,12 +55,11 @@ const kpis = computed(() => {
       label: t('Бонус'),
       icon: 'ph:star',
       value: `${o.bonusRate} %`,
-      sub: t('получатель: {name}', { name: personName(o.bonusPersonId) }),
+      sub: sums.bonusPending
+        ? t('{name} · получено {got}, не получено {left}', { name: personName(o.bonusPersonId), got: m(sums.bonus), left: m(sums.bonusPending) })
+        : t('{name} · получено {got}', { name: personName(o.bonusPersonId), got: m(sums.bonus) }),
       tone: 'warn' as const,
     })
-  }
-  if (sums.promised) {
-    out.push({ label: t('Предстоит выплатить'), icon: 'ph:clock-countdown', value: m(sums.promised), sub: t('обязательства'), tone: 'warn' as const })
   }
   return out
 })
@@ -259,7 +261,7 @@ function toggle(id: string) {
 
     <TeamPlanTable v-if="can.seeContract" :object-id="object.id" :editable="can.manage" />
 
-    <section v-if="can.manage" class="sect no-print">
+    <section v-if="ROLES_ENABLED && can.manage" class="sect no-print">
       <h2>{{ t('Кто допущен к объекту') }}</h2>
       <div class="panel">
         <p class="hint" style="margin-bottom: 10px">
@@ -291,10 +293,11 @@ function toggle(id: string) {
       </div>
     </section>
 
-    <ObjectForm :open="editing" :object="object" @close="editing = false" />
+    <ObjectForm v-if="rawObject" :open="editing" :object="rawObject" @close="editing = false" />
     <StageForm
+      v-if="rawObject"
       :open="addingStage"
-      :object="object"
+      :object="rawObject"
       @close="addingStage = false"
       @saved="id => router.push(`/stages/${id}`)"
     />

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { dmy } from '#shared/calc'
 import { personPlan } from '#shared/plan'
 
 /** Люди разложены по командам: архитекторы, дизайнеры, конструкторы, инженеры. */
@@ -27,8 +26,7 @@ const groups = computed(() => {
   return out.filter(g => g.rows.length)
 })
 
-const when = (plan: { left: number; next: { dueDate: string | null; stageNumber: number | null } | null }) => {
-  if (plan.next?.dueDate) return dmy(plan.next.dueDate)
+const when = (plan: { left: number; next: { stageNumber: number | null } | null }) => {
   if (plan.next?.stageNumber != null) return t('после этапа {n}', { n: plan.next.stageNumber })
   return plan.left > 0 ? t('срок не назначен') : '—'
 }

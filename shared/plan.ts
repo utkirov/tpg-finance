@@ -1,4 +1,4 @@
-import { calcStage, sharesFor, splitShares, stagesOf, type AppState, type Obj, type Person, type Share, type Stage } from './calc.ts'
+import { calcStage, counts, sharesFor, splitShares, stagesOf, type AppState, type Obj, type Person, type Share, type Stage } from './calc.ts'
 
 /**
  * Команды и планирование расходов.
@@ -98,7 +98,7 @@ const base = (o: { amountBase?: number; amount: number }) => o.amountBase ?? o.a
 function spentByTeam(state: PlanState, objectId: string): Map<string, number> {
   const out = new Map<string, number>()
   for (const op of state.ops) {
-    if (op.objectId !== objectId || op.kind !== 'exp' || op.status !== 'ok' || !op.teamId) continue
+    if (op.objectId !== objectId || op.kind !== 'exp' || !counts(op) || !op.teamId) continue
     out.set(op.teamId, (out.get(op.teamId) ?? 0) + base(op))
   }
   return out
@@ -156,7 +156,7 @@ export function teamPeople(
   const team = state.teams.find(t => t.id === teamId) ?? null
   const spent = new Map<string, number>()
   for (const op of state.ops) {
-    if (op.objectId !== objectId || op.kind !== 'exp' || op.status !== 'ok') continue
+    if (op.objectId !== objectId || op.kind !== 'exp' || !counts(op)) continue
     if (op.teamId !== teamId || !op.personId) continue
     spent.set(op.personId, (spent.get(op.personId) ?? 0) + base(op))
   }
@@ -192,7 +192,7 @@ export function teamPeople(
 export function stageTeams(state: PlanState, stageId: string): StageTeamRow[] {
   const spent = new Map<string, number>()
   for (const op of state.ops) {
-    if (op.stageId !== stageId || op.kind !== 'exp' || op.status !== 'ok' || !op.teamId) continue
+    if (op.stageId !== stageId || op.kind !== 'exp' || !counts(op) || !op.teamId) continue
     spent.set(op.teamId, (spent.get(op.teamId) ?? 0) + base(op))
   }
 
@@ -245,7 +245,7 @@ export function objectForecast(state: PlanState, obj: Obj, shares: Share[]): For
   let spent = 0
   const paid = new Map<string, number>()
   for (const op of state.ops) {
-    if (!stageIds.has(op.stageId) || op.status !== 'ok') continue
+    if (!stageIds.has(op.stageId) || !counts(op)) continue
     if (op.kind === 'exp') spent += base(op)
     if (op.kind === 'adv' && op.personId) paid.set(op.personId, (paid.get(op.personId) ?? 0) + base(op))
   }
@@ -310,10 +310,6 @@ export interface PersonRow {
   paid: number
   /** Ещё не получено. */
   left: number
-  /** Обещано с названным сроком. */
-  promised: number
-  /** Ближайший названный срок. */
-  dueDate: string | null
   /** Номер этапа, из которого пойдут следующие деньги. */
   stageNumber: number | null
   /** Сумма назначена лично ему, а не всей команде. */
@@ -332,8 +328,8 @@ export interface PersonPlan {
   expected: number
   paid: number
   left: number
-  /** Ближайший платёж: срок, сумма и откуда. */
-  next: { dueDate: string | null; amount: number; objectName: string; stageNumber: number | null } | null
+  /** Ближайший платёж: сумма и с какого этапа. */
+  next: { amount: number; objectName: string; stageNumber: number | null } | null
   rows: PersonRow[]
 }
 
@@ -360,15 +356,9 @@ export function personPlan(state: PersonState, personId: string): PersonPlan {
     const stageIds = new Set(stages.map(s => s.id))
 
     let paid = 0
-    let promised = 0
-    let dueDate: string | null = null
     for (const op of state.ops) {
       if (op.personId !== personId || !stageIds.has(op.stageId) || !payment(op)) continue
-      if (op.status === 'ok') paid += base(op)
-      else if (op.status === 'promised') {
-        promised += base(op)
-        if (op.dueDate && (!dueDate || op.dueDate < dueDate)) dueDate = op.dueDate
-      }
+      if (counts(op)) paid += base(op)
     }
 
     // Причитается и с какого этапа ждать денег.
@@ -397,15 +387,13 @@ export function personPlan(state: PersonState, personId: string): PersonPlan {
       }
     }
 
-    if (!expected && !paid && !promised) continue
+    if (!expected && !paid) continue
     rows.push({
       objectId: obj.id,
       objectName: obj.name,
       expected,
       paid,
       left: Math.max(0, expected - paid),
-      promised,
-      dueDate,
       stageNumber,
       personal,
     })
@@ -413,11 +401,10 @@ export function personPlan(state: PersonState, personId: string): PersonPlan {
 
   const sum = (pick: 'expected' | 'paid' | 'left') => rows.reduce((a, r) => a + r[pick], 0)
 
-  // Ближайший платёж: сперва названный срок, иначе ближайший незакрытый этап.
-  const dated = rows.filter(r => r.dueDate).sort((a, b) => a.dueDate!.localeCompare(b.dueDate!))[0]
+  // Ближайший платёж: ближайший незакрытый этап, где ему ещё должны.
   const staged = rows.find(r => r.stageNumber !== null && r.left > 0)
   const owed = rows.find(r => r.left > 0)
-  const source = dated ?? staged ?? owed ?? null
+  const source = staged ?? owed ?? null
 
   return {
     basis,
@@ -430,8 +417,7 @@ export function personPlan(state: PersonState, personId: string): PersonPlan {
     left: sum('left'),
     next: source
       ? {
-          dueDate: source.dueDate,
-          amount: source.promised || source.left,
+          amount: source.left,
           objectName: source.objectName,
           stageNumber: source.stageNumber,
         }

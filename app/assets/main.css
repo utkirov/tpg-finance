@@ -556,7 +556,8 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space:
 tbody tr:last-child td { border-bottom: 0; }
 tr.tot td { border-top: 1px solid var(--outline); border-bottom: 0; font-weight: 500; background: var(--surface-high); }
 tr.auto td { background: color-mix(in srgb, var(--auto-container) 55%, transparent); }
-tr.promised td { background: color-mix(in srgb, var(--tertiary-container) 45%, transparent); }
+/* Начисленный, но не полученный бонус: виден, но в расчёт не идёт. */
+tr.pending td.n { color: var(--on-surface-variant); font-style: italic; }
 tr.void td { color: var(--on-surface-variant); }
 tr.void td.n, tr.void td.desc b { text-decoration: line-through; }
 tr.click { cursor: pointer; transition: background var(--motion-short) var(--ease-standard); }
