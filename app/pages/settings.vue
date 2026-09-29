@@ -282,7 +282,7 @@ async function disableUser(id: string, name: string) {
             <input v-model="team.composite" type="checkbox">
             {{ t('мультикоманда') }}
           </label>
-          <button type="button" class="x" :title="t('Убрать')" @click="removeTeam(team.id)">
+          <button type="button" class="x" :title="t('Убрать')" :aria-label="t('Убрать')" @click="removeTeam(team.id)">
             <Icon name="ph:trash" />
           </button>
           <div v-if="team.composite" class="chips" style="grid-column: 1 / -1">
@@ -326,7 +326,7 @@ async function disableUser(id: string, name: string) {
             <input v-model="p.isSharer" type="checkbox">
             {{ t('делит') }}
           </label>
-          <button type="button" class="x" :title="t('Убрать')" @click="removePerson(p.id)"><Icon name="ph:trash" /></button>
+          <button type="button" class="x" :title="t('Убрать')" :aria-label="t('Убрать')" @click="removePerson(p.id)"><Icon name="ph:trash" /></button>
         </div>
         <button type="button" class="btn sm tonal" @click="addPerson"><Icon name="ph:plus" />{{ t('Добавить человека') }}</button>
       </div>
@@ -340,7 +340,7 @@ async function disableUser(id: string, name: string) {
             <option v-for="p in draft.people" :key="p.id" :value="p.id">{{ p.name || t('без имени') }}</option>
           </select>
           <input v-model="s.percent" v-mask="'percent'" class="num" inputmode="decimal" :aria-label="t('Процент')">
-          <button type="button" class="x" :title="t('Убрать')" @click="draft.shares.splice(i, 1)"><Icon name="ph:trash" /></button>
+          <button type="button" class="x" :title="t('Убрать')" :aria-label="t('Убрать')" @click="draft.shares.splice(i, 1)"><Icon name="ph:trash" /></button>
         </div>
         <p class="hint">
           {{ t('Сумма процентов: {sum}. Набор с суммой не 100 не сохраняется. Текущая версия — {version}.', {
@@ -374,7 +374,7 @@ async function disableUser(id: string, name: string) {
             @input="setScale(i, 'to', ($event.target as HTMLInputElement).value)"
           >
           <input v-model="r.rate" v-mask="'percent'" class="num" inputmode="decimal" :aria-label="t('Ставка %')">
-          <button type="button" class="x" :title="t('Убрать')" @click="draft.bonusScale.splice(i, 1)"><Icon name="ph:trash" /></button>
+          <button type="button" class="x" :title="t('Убрать')" :aria-label="t('Убрать')" @click="draft.bonusScale.splice(i, 1)"><Icon name="ph:trash" /></button>
         </div>
         <p class="hint">
           {{ t('Потолок ставки — {max} %. Диапазоны должны идти встык, без разрывов. Текущая версия — {version}.', {
@@ -439,7 +439,7 @@ async function disableUser(id: string, name: string) {
                 type="button"
                 class="x"
                 :disabled="c.system"
-                :title="c.system ? t('системная категория') : t('Убрать')"
+                :title="c.system ? t('системная категория') : t('Убрать')" :aria-label="c.system ? t('системная категория') : t('Убрать')"
                 @click="draft.categories = draft.categories.filter(x => x.id !== c.id)"
               >
                 <Icon :name="c.system ? 'ph:lock-simple' : 'ph:trash'" />
