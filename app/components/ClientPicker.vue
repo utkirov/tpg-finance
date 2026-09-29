@@ -43,7 +43,7 @@ function pick(id: string) {
           · {{ t('объектов: {count}', { count: objectsOf(chosen.id).length }) }}
         </small>
       </span>
-      <button type="button" class="icon-btn" :title="t('Убрать')" @click="model = ''">
+      <button type="button" class="icon-btn" :aria-label="t('Убрать')" :title="t('Убрать')" @click="model = ''">
         <Icon name="ph:x" />
       </button>
     </div>
