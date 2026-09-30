@@ -204,7 +204,7 @@ async function save() {
             <option value="">{{ t('— не выбран —') }}</option>
             <option v-for="p in settings.people" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
-          <button v-if="can.manage" type="button" class="icon-btn" :title="t('Новый человек')" @click="addingPerson = !addingPerson">
+          <button v-if="can.manage" type="button" class="icon-btn" :title="t('Новый человек')" :aria-label="t('Новый человек')" :aria-expanded="addingPerson" @click="addingPerson = !addingPerson">
             <Icon name="ph:plus" />
           </button>
         </div>
