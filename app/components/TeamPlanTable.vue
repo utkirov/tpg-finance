@@ -204,6 +204,7 @@ const teamParts = (id: string) => {
                   type="button"
                   class="x"
                   :title="t('Убрать')"
+                  :aria-label="t('Убрать')"
                   @click="remove(r.teamId)"
                 >
                   <Icon name="ph:trash" />
