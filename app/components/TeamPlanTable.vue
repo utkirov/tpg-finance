@@ -203,7 +203,7 @@ const teamParts = (id: string) => {
                   v-if="r.planned > 0 || r.allocated > 0"
                   type="button"
                   class="x"
-                  :title="t('Убрать')"
+                  :title="t('Убрать')" :aria-label="t('Убрать')"
                   @click="remove(r.teamId)"
                 >
                   <Icon name="ph:trash" />
