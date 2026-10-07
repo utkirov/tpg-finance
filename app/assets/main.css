@@ -79,6 +79,15 @@
 
   --gut: 20px;
 
+  /* ---------- графики ----------
+     Категориальные цвета серий: синий, оранжевый, бирюзовый. Порядок
+     проверен на различимость при протанопии и дейтеранопии (ΔE ≥ 9)
+     на поверхности панели в обеих темах. Ниже 3:1 к фону — поэтому
+     под каждым графиком есть таблица с теми же числами. */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+
   color-scheme: light;
 }
 
@@ -112,6 +121,9 @@
     --auto-container: #5b4300;
     --on-auto-container: #ffdf9d;
 
+    --viz-1: #3987e5;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
     --surface: #0e1513;
     --on-surface: #dde4e1;
     --surface-variant: #3f4946;
@@ -654,7 +666,7 @@ input[type="file"] { display: none; }
 .seg { display: flex; border: 1px solid var(--outline); border-radius: var(--shape-full); overflow: hidden; }
 .seg button {
   position: relative; overflow: hidden;
-  flex: 1; min-height: 48px; padding: 8px 12px; border: 0; background: transparent;
+  flex: 1; min-height: 48px; padding: 8px 12px; border: 0; background: transparent; white-space: nowrap;
   color: var(--on-surface); font-size: 14px; font-weight: 500; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   transition: background var(--motion-short) var(--ease-standard), color var(--motion-short) var(--ease-standard);
@@ -958,3 +970,6 @@ dialog[open]::backdrop { animation: fade-in var(--motion-medium) var(--ease-stan
     transition-duration: 0.01ms !important;
   }
 }
+
+/* «Показать ещё» под длинной лентой */
+.show-more { display: flex; justify-content: center; margin-top: 12px; }

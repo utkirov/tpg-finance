@@ -1,20 +1,23 @@
 <script setup lang="ts">
 import { dmy, personSummary, today } from '#shared/calc'
 import { personPlan } from '#shared/plan'
+import type { Column } from '~/components/DataTable.vue'
 
 /**
  * Карточка человека. Главный вопрос: в каких объектах он занят,
  * сколько уже получил, сколько ещё нет и когда ждать следующие деньги.
  */
 const route = useRoute()
-const { state, personName } = useFinance()
+const { state, personName, toMain } = useFinance()
+const opText = useOps()
 const { t } = useT()
 const { m } = useMoney()
 
 const personId = computed(() => String(route.params.id))
 const person = computed(() => state.value.settings.people.find(p => p.id === personId.value) ?? null)
-const summary = computed(() => personSummary(state.value, personId.value))
-const plan = computed(() => personPlan(state.value, personId.value))
+// Итоги по разным объектам — в основной валюте, строки ленты — в валюте своего объекта.
+const summary = computed(() => personSummary(state.value, personId.value, toMain))
+const plan = computed(() => personPlan(state.value, personId.value, toMain))
 
 const ops = computed(() =>
   state.value.ops
@@ -73,24 +76,34 @@ const kpis = computed(() => [
 ])
 
 const print = () => window.print()
+
+const objectColumns = computed<Column[]>(() => [
+  { key: 'objectName', label: t('Объект'), desc: true },
+  { key: 'expected', label: t('Причитается'), num: true },
+  { key: 'paid', label: t('Получено'), num: true },
+  { key: 'left', label: t('Осталось'), num: true },
+  { key: 'when', label: t('Когда') },
+])
+
+const opColumns = computed<Column[]>(() => [
+  { key: 'date', label: t('Дата'), num: true },
+  { key: 'object', label: t('Объект') },
+  { key: 'what', label: t('Операция'), desc: true },
+  { key: 'amount', label: t('Сумма'), num: true },
+])
 </script>
 
 <template>
   <div v-if="person">
-    <div class="head-row">
-      <div>
-        <h1>{{ person.name }}</h1>
-        <p class="sub">
-          {{ person.role ? t(person.role) : t('без роли') }}
-          <template v-if="plan.teamName"> · {{ plan.teamName }}</template>
-          <template v-if="person.isSharer"> · {{ t('участник дележа') }}</template>
-          <template v-if="person.phone"> · {{ person.phone }}</template>
-        </p>
-      </div>
-      <div class="acts no-print">
-        <button type="button" class="btn" @click="print"><Icon name="ph:printer" />{{ t('Акт сверки на печать') }}</button>
-      </div>
-    </div>
+    <PageHead :title="person.name">
+      <template #sub>
+        {{ person.role ? t(person.role) : t('без роли') }}
+        <template v-if="plan.teamName"> · {{ plan.teamName }}</template>
+        <template v-if="person.isSharer"> · {{ t('участник дележа') }}</template>
+        <template v-if="person.phone"> · <a :href="`tel:${person.phone.replace(/[^+\d]/g, '')}`">{{ person.phone }}</a></template>
+      </template>
+      <button type="button" class="btn" @click="print"><Icon name="ph:printer" />{{ t('Акт сверки на печать') }}</button>
+    </PageHead>
 
     <KpiStrip :items="kpis" />
 
@@ -103,75 +116,48 @@ const print = () => window.print()
 
     <section class="sect">
       <h2>{{ t('По объектам') }}</h2>
-      <div v-if="!plan.rows.length" class="empty">
-        <Icon name="ph:tray" />
-        <p>{{ t('Этот человек ещё нигде не встречается.') }}</p>
-      </div>
-      <div v-else class="tw">
-        <table class="stack">
-          <thead>
-            <tr>
-              <th>{{ t('Объект') }}</th>
-              <th class="n">{{ t('Причитается') }}</th>
-              <th class="n">{{ t('Получено') }}</th>
-              <th class="n">{{ t('Осталось') }}</th>
-              <th>{{ t('Когда') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="r in plan.rows" :key="r.objectId">
-              <td class="desc">
-                <b><NuxtLink :to="`/objects/${r.objectId}`">{{ r.objectName }}</NuxtLink></b>
-              </td>
-              <td class="n" :data-label="t('Причитается')">{{ m(r.expected) }}</td>
-              <td class="n" :data-label="t('Получено')">{{ m(r.paid) }}</td>
-              <td class="n" :data-label="t('Осталось')" :class="{ acc: r.left > 0 }">{{ m(r.left) }}</td>
-              <td :data-label="t('Когда')">
-                {{ when(r) }}
-                <span v-if="r.promised" class="pill m">{{ t('обещано {amount}', { amount: m(r.promised) }) }}</span>
-              </td>
-            </tr>
-            <tr class="tot">
-              <td>{{ t('Итого') }}</td>
-              <td class="n" :data-label="t('Причитается')">{{ m(plan.expected) }}</td>
-              <td class="n" :data-label="t('Получено')">{{ m(plan.paid) }}</td>
-              <td class="n" :data-label="t('Осталось')">{{ m(plan.left) }}</td>
-              <td />
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <EmptyState v-if="!plan.rows.length" :text="t('Этот человек ещё нигде не встречается.')" />
+      <DataTable
+        v-else
+        :columns="objectColumns"
+        :rows="plan.rows"
+        :row-key="r => r.objectId"
+        :total="{ objectName: t('Итого'), expected: m(plan.expected), paid: m(plan.paid), left: m(plan.left) }"
+      >
+        <template #cell-objectName="{ row }">
+          <b><NuxtLink :to="`/objects/${row.objectId}`">{{ row.objectName }}</NuxtLink></b>
+        </template>
+        <template #cell-expected="{ row }">{{ m(row.expected) }}</template>
+        <template #cell-paid="{ row }">{{ m(row.paid) }}</template>
+        <template #cell-left="{ row }"><span :class="{ acc: row.left > 0 }">{{ m(row.left) }}</span></template>
+        <template #cell-when="{ row }">
+          {{ when(row) }}
+          <span v-if="row.promised" class="pill m">{{ t('обещано {amount}', { amount: m(row.promised) }) }}</span>
+        </template>
+      </DataTable>
     </section>
 
     <section class="sect">
       <h2>{{ t('Операции с его участием') }}</h2>
-      <div v-if="!ops.length" class="empty"><Icon name="ph:receipt" /><p>{{ t('Операций нет.') }}</p></div>
-      <div v-else class="tw">
-        <table class="stack">
-          <thead>
-            <tr>
-              <th>{{ t('Дата') }}</th>
-              <th>{{ t('Объект') }}</th>
-              <th>{{ t('Операция') }}</th>
-              <th class="n">{{ t('Сумма') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="op in ops" :key="op.id" :class="{ auto: op.isAuto, promised: op.status === 'promised' }">
-              <td class="n" :data-label="t('Дата')">{{ dmy(op.date) }}</td>
-              <td :data-label="t('Объект')">
-                <NuxtLink :to="`/stages/${op.stageId}`">{{ objectName(op.objectId) }}</NuxtLink>
-              </td>
-              <td class="desc">
-                <b>{{ op.isAuto ? t('Бонус') : op.kind === 'adv' ? t('Аванс') : t('Расход объекта') }}</b>
-                <small v-if="op.note">{{ op.note }}</small>
-                <span v-if="op.status === 'promised'" class="pill m">{{ t('обещано') }}</span>
-              </td>
-              <td class="n" :data-label="t('Сумма')">{{ m(op.amountBase) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <EmptyState v-if="!ops.length" icon="ph:receipt" :text="t('Операций нет.')" />
+      <DataTable
+        v-else
+        :columns="opColumns"
+        :rows="ops"
+        :row-key="op => op.id"
+        :row-class="op => ({ auto: op.isAuto, promised: op.status === 'promised' })"
+      >
+        <template #cell-date="{ row }">{{ dmy(row.date) }}</template>
+        <template #cell-object="{ row }">
+          <NuxtLink :to="`/stages/${row.stageId}`">{{ objectName(row.objectId) }}</NuxtLink>
+        </template>
+        <template #cell-what="{ row }">
+          <b>{{ opText.label(row) }}</b>
+          <small v-if="row.note">{{ row.note }}</small>
+          <span v-if="row.status === 'promised'" class="pill m">{{ t('обещано') }}</span>
+        </template>
+        <template #cell-amount="{ row }">{{ m(row.amountBase, opText.currencyOf(row)) }}</template>
+      </DataTable>
     </section>
 
     <div class="sign" style="display: none">
@@ -180,11 +166,9 @@ const print = () => window.print()
     </div>
   </div>
 
-  <div v-else class="empty">
-    <Icon name="ph:tray" />
-    <p>{{ t('Человек не найден.') }}</p>
+  <EmptyState v-else :text="t('Человек не найден.')">
     <NuxtLink to="/people" class="btn"><Icon name="ph:arrow-left" />{{ t('К списку людей') }}</NuxtLink>
-  </div>
+  </EmptyState>
 </template>
 
 <style scoped>

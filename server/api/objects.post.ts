@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
   const name = text(body.name, 'название', { required: true, max: 120 })
   const contractAmount = cents(body.contractAmount, 'сумма договора', { positive: false })
   must(contractAmount >= 0, 'Сумма договора не может быть отрицательной')
-  const currency = (text(body.currency, 'валюта', { max: 3 }) || 'USD').toUpperCase()
+  const currency = currencyCode(body.currency, 'USD')
   // Курс объекта: сколько сумов за доллар. Ноль — не задан, тогда берётся справочный.
   const rate = Number(body.rate) > 0 ? Number(body.rate) : 0
   must(Number.isFinite(rate) && rate >= 0 && rate < 1e9, 'Проверьте курс объекта')

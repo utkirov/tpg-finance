@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import type { Role } from '#shared/roles'
 import { abilities } from '#shared/roles'
-import { newToken, verifyPassword } from './password'
+import { hashPassword, newToken, verifyPassword } from './password'
 
 export const SESSION_COOKIE = 'finance_session'
 const SESSION_DAYS = 30
@@ -27,13 +27,21 @@ const toUser = (r: Row): SessionUser => ({
 })
 
 export function findUserByLogin(login: string): (SessionUser & { passHash: string; passSalt: string }) | null {
-  const r = useDb().prepare('SELECT * FROM users WHERE login = ? AND active = 1').get(login.trim().toLowerCase()) as Row | undefined
+  const r = stmt('SELECT * FROM users WHERE login = ? AND active = 1').get(login.trim().toLowerCase()) as Row | undefined
   return r ? { ...toUser(r), passHash: r.pass_hash, passSalt: r.pass_salt } : null
 }
 
+/** Хэш-пустышка: неизвестный логин проверяется столько же, сколько известный. */
+let dummy: { hash: string; salt: string } | null = null
+
 export function checkPassword(login: string, password: string): SessionUser | null {
   const user = findUserByLogin(login)
-  if (!user) return null
+  if (!user) {
+    // Без этого по времени ответа видно, какие логины существуют.
+    dummy ??= hashPassword(newToken())
+    verifyPassword(password, dummy.hash, dummy.salt)
+    return null
+  }
   return verifyPassword(password, user.passHash, user.passSalt) ? user : null
 }
 
@@ -41,28 +49,30 @@ export function createSession(userId: string): string {
   const token = newToken()
   const now = new Date()
   const expires = new Date(now.getTime() + SESSION_DAYS * 864e5)
-  useDb()
-    .prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
+  stmt('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
     .run(token, userId, now.toISOString(), expires.toISOString())
   return token
 }
 
 export function destroySession(token: string) {
-  useDb().prepare('DELETE FROM sessions WHERE token = ?').run(token)
+  stmt('DELETE FROM sessions WHERE token = ?').run(token)
+}
+
+/** Все сессии пользователя, кроме текущей: после смены пароля или отключения. */
+export function destroyUserSessions(userId: string, except = '') {
+  stmt('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, except)
 }
 
 export function userFromToken(token: string | undefined): SessionUser | null {
   if (!token) return null
-  const db = useDb()
-  const row = db
-    .prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ? AND u.active = 1')
+  const row = stmt('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ? AND u.active = 1')
     .get(token, new Date().toISOString()) as Row | undefined
   return row ? toUser(row) : null
 }
 
 /** Раз в сутки чистим протухшие сессии — таблица не растёт вечно. */
 export function pruneSessions() {
-  useDb().prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString())
+  stmt('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString())
 }
 
 export function setSessionCookie(event: H3Event, token: string) {

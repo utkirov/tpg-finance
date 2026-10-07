@@ -3,6 +3,7 @@ import {
   currencyLabel, formatMoney, objectTotals, otherCurrency, sharesFor, toObjectCurrency, totalsOf,
 } from '#shared/calc'
 import { objectForecast, stageProgress } from '#shared/plan'
+import type { Column } from '~/components/DataTable.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -124,6 +125,16 @@ async function saveAccess() {
   }
 }
 
+const stageColumns = computed<Column[]>(() => [
+  { key: 'stage', label: t('Этап'), desc: true },
+  ...(can.value.seeContract
+    ? [{ key: 'amount', label: t('Сумма'), num: true }, { key: 'inc', label: t('Получено'), num: true }]
+    : []),
+  { key: 'exp', label: t('Расходы'), num: true },
+  { key: 'cash', label: t('Касса'), num: true },
+  { key: 'progress', label: t('Закрытие') },
+])
+
 function toggle(id: string) {
   granted.value = granted.value.includes(id) ? granted.value.filter(x => x !== id) : [...granted.value, id]
 }
@@ -131,29 +142,26 @@ function toggle(id: string) {
 
 <template>
   <div v-if="object">
-    <div class="head-row">
-      <div>
-        <h1>{{ object.name }}</h1>
-        <p class="sub">
-          {{ object.customer || '—' }}<template v-if="object.address"> · {{ object.address }}</template>
-          <template v-if="can.seeContract"> · {{ t('основание: {basis}', { basis: t(object.basisType) }) }}</template>
-          <template v-if="can.seeContract && object.basisNote"> ({{ object.basisNote }})</template>
-        </p>
-      </div>
-      <div class="acts no-print">
-        <NuxtLink v-if="can.seeAllShares" class="btn" :to="`/objects/${object.id}/journal`">
-          <Icon name="ph:clock-counter-clockwise" />{{ t('Журнал изменений') }}
-        </NuxtLink>
-        <template v-if="can.manage">
-          <button type="button" class="btn" @click="editing = true">
-            <Icon name="ph:pencil-simple" />{{ t('Изменить') }}
-          </button>
-          <button type="button" class="btn pri" @click="addingStage = true">
-            <Icon name="ph:plus" />{{ t('Добавить этап') }}
-          </button>
-        </template>
-      </div>
-    </div>
+    <PageHead :title="object.name">
+      <template #sub>
+        <NuxtLink v-if="object.clientId && can.seeContract" :to="`/clients/${object.clientId}`">{{ object.customer || '—' }}</NuxtLink>
+        <template v-else>{{ object.customer || '—' }}</template>
+        <template v-if="object.address"> · {{ object.address }}</template>
+        <template v-if="can.seeContract"> · {{ t('основание: {basis}', { basis: t(object.basisType) }) }}</template>
+        <template v-if="can.seeContract && object.basisNote"> ({{ object.basisNote }})</template>
+      </template>
+      <NuxtLink v-if="can.seeAllShares" class="btn" :to="`/objects/${object.id}/journal`">
+        <Icon name="ph:clock-counter-clockwise" />{{ t('Журнал изменений') }}
+      </NuxtLink>
+      <template v-if="can.manage">
+        <button type="button" class="btn" @click="editing = true">
+          <Icon name="ph:pencil-simple" />{{ t('Изменить') }}
+        </button>
+        <button type="button" class="btn pri" @click="addingStage = true">
+          <Icon name="ph:plus" />{{ t('Добавить этап') }}
+        </button>
+      </template>
+    </PageHead>
 
     <KpiStrip :items="kpis" />
 
@@ -167,60 +175,44 @@ function toggle(id: string) {
 
     <section v-if="papers.length" class="sect">
       <h2>{{ t('Документы') }}</h2>
-      <div class="files">
-        <a v-for="f in papers" :key="f.id" class="file" :href="`/api/attachments/${f.id}`" target="_blank" rel="noopener">
-          <img v-if="f.mime.startsWith('image/')" :src="`/api/attachments/${f.id}`" :alt="t(f.kind)">
-          <Icon v-else name="ph:file-text" />
-          <span><b>{{ t(f.kind) }}</b><br>{{ f.filename }}</span>
-        </a>
-      </div>
+      <FileThumbs :files="papers" captions />
     </section>
 
     <section class="sect">
       <h2>{{ t('Этапы') }}</h2>
 
-      <div v-if="!totals?.stages.length" class="empty">
-        <Icon name="ph:list-checks" />
-        <p>{{ t('Этапов нет. Все расчёты замкнуты внутри этапа — создайте хотя бы один.') }}</p>
+      <EmptyState
+        v-if="!totals?.stages.length"
+        icon="ph:list-checks"
+        :text="t('Этапов нет. Все расчёты замкнуты внутри этапа — создайте хотя бы один.')"
+      >
         <button v-if="can.manage" type="button" class="btn pri" @click="addingStage = true">
           <Icon name="ph:plus" />{{ t('Добавить этап') }}
         </button>
-      </div>
+      </EmptyState>
 
-      <div v-else class="tw">
-        <table class="stack">
-          <thead>
-            <tr>
-              <th>{{ t('Этап') }}</th>
-              <th v-if="can.seeContract" class="n">{{ t('Сумма') }}</th>
-              <th v-if="can.seeContract" class="n">{{ t('Получено') }}</th>
-              <th class="n">{{ t('Расходы') }}</th>
-              <th class="n">{{ t('Касса') }}</th>
-              <th>{{ t('Закрытие') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="st in totals.stages" :key="st.id" class="click" @click="router.push(`/stages/${st.id}`)">
-              <td class="desc">
-                <b>{{ t('Этап') }} {{ st.number }}<StatusPill :status="st.status" /></b>
-                <small v-if="st.name">{{ st.name }}</small>
-              </td>
-              <td v-if="can.seeContract" class="n" :data-label="t('Сумма')">{{ m(st.amount) }}</td>
-              <td v-if="can.seeContract" class="n" :data-label="t('Получено')">{{ m(totalsOf(state, st.id).inc) }}</td>
-              <td class="n" :data-label="t('Расходы')">{{ m(totalsOf(state, st.id).exp) }}</td>
-              <td class="n" :data-label="t('Касса')" :class="{ neg: totalsOf(state, st.id).cash < 0 }">
-                {{ m(totalsOf(state, st.id).cash) }}
-              </td>
-              <td :data-label="t('Закрытие')">
-                <ProgressBar
-                  :value="progressOf(st.id)?.overall ?? 0"
-                  :tone="progressOf(st.id)?.done ? 'ok' : 'warn'"
-                />
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        v-else
+        :columns="stageColumns"
+        :rows="totals.stages"
+        :row-key="st => st.id"
+        clickable
+        @open="st => router.push(`/stages/${st.id}`)"
+      >
+        <template #cell-stage="{ row }">
+          <b>{{ t('Этап') }} {{ row.number }}<StatusPill :status="row.status" /></b>
+          <small v-if="row.name">{{ row.name }}</small>
+        </template>
+        <template #cell-amount="{ row }">{{ m(row.amount) }}</template>
+        <template #cell-inc="{ row }">{{ m(totalsOf(state, row.id).inc) }}</template>
+        <template #cell-exp="{ row }">{{ m(totalsOf(state, row.id).exp) }}</template>
+        <template #cell-cash="{ row }">
+          <span :class="{ neg: totalsOf(state, row.id).cash < 0 }">{{ m(totalsOf(state, row.id).cash) }}</span>
+        </template>
+        <template #cell-progress="{ row }">
+          <ProgressBar :value="progressOf(row.id)?.overall ?? 0" :tone="progressOf(row.id)?.done ? 'ok' : 'warn'" />
+        </template>
+      </DataTable>
     </section>
 
     <section v-if="shareRows.length" class="sect">
@@ -300,9 +292,7 @@ function toggle(id: string) {
     />
   </div>
 
-  <div v-else class="empty">
-    <Icon name="ph:tray" />
-    <p>{{ t('Объект не найден или вам не открыт доступ.') }}</p>
+  <EmptyState v-else :text="t('Объект не найден или вам не открыт доступ.')">
     <NuxtLink to="/" class="btn"><Icon name="ph:arrow-left" />{{ t('К списку объектов') }}</NuxtLink>
-  </div>
+  </EmptyState>
 </template>

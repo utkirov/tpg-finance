@@ -64,3 +64,10 @@ export function oneOf<T extends string>(value: unknown, allowed: readonly T[], f
   must(allowed.includes(s), '{field}: недопустимое значение', { field })
   return s
 }
+
+/** Код валюты — три латинские буквы: USD, UZS, EUR. */
+export function currencyCode(value: unknown, fallback = ''): string {
+  const s = String(value ?? '').trim().toUpperCase() || fallback
+  must(/^[A-Z]{3}$/.test(s), 'Код валюты — три латинские буквы, например USD')
+  return s
+}

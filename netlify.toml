@@ -1,0 +1,10 @@
+# Демо на Netlify: сервер Nuxt работает функцией, база — во временной папке
+# функции и пересоздаётся с контрольным примером при холодном старте.
+# Общий пароль учётных записей примера — переменная окружения DEMO_PASSWORD.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NITRO_PRESET = "netlify"

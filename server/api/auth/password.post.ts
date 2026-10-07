@@ -1,3 +1,4 @@
+import { SESSION_COOKIE, destroyUserSessions } from '../../utils/auth'
 import { hashPassword } from '../../utils/password'
 
 /** Смена пароля. Пароли по умолчанию помечены must_change и требуют замены. */
@@ -13,6 +14,8 @@ export default defineEventHandler(async (event) => {
   return tx(() => {
     const { hash, salt } = hashPassword(next)
     useDb().prepare('UPDATE users SET pass_hash = ?, pass_salt = ?, must_change = 0 WHERE id = ?').run(hash, salt, user.id)
+    // Кто знал старый пароль и успел войти, выходит: остаётся только эта сессия.
+    destroyUserSessions(user.id, getCookie(event, SESSION_COOKIE) ?? '')
     audit('user', user.id, 'password', '', user.id)
     return { ok: true }
   })

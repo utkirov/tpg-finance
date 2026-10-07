@@ -1,28 +1,35 @@
 <script setup lang="ts">
-import { objectTotals, obligations, percent } from '#shared/calc'
+import { objectTotals, obligations } from '#shared/calc'
+import type { Kpi } from '~/components/KpiStrip.vue'
 
-const { state, can, loading, refresh } = useFinance()
+const { state, can, loading, refresh, toMain } = useFinance()
 const { t } = useT()
 const { m, m0 } = useMoney()
 const router = useRouter()
 
 const showForm = ref(false)
-const sort = ref<'cash' | 'name'>('cash')
+const sort = ref<'cash' | 'debt' | 'name'>('cash')
+const query = ref('')
+
+const all = computed(() => state.value.objects.map(o => ({ o, c: objectTotals(state.value, o.id) })))
 
 const rows = computed(() => {
-  const list = state.value.objects.map(o => ({ o, c: objectTotals(state.value, o.id) }))
-  return sort.value === 'name'
-    ? list.sort((a, b) => a.o.name.localeCompare(b.o.name, 'ru'))
-    : list.sort((a, b) => b.c.cash - a.c.cash)
+  const q = query.value.trim().toLowerCase()
+  const list = all.value.filter(({ o }) => !q || `${o.name} ${o.customer} ${o.address}`.toLowerCase().includes(q))
+  // Сравниваем в одной валюте: касса в сумах и касса в долларах — разные числа.
+  if (sort.value === 'name') return list.sort((a, b) => a.o.name.localeCompare(b.o.name, 'ru'))
+  const pick = sort.value
+  return list.sort((a, b) => toMain(b.c[pick], b.o.id) - toMain(a.c[pick], a.o.id))
 })
 
+/** Итоги по всем объектам — в основной валюте, каждый по своему курсу. */
 const totals = computed(() =>
-  rows.value.reduce(
+  all.value.reduce(
     (acc, { o, c }) => ({
-      cash: acc.cash + c.cash,
-      debt: acc.debt + c.debt,
-      contract: acc.contract + o.contractAmount,
-      promised: acc.promised + c.promised,
+      cash: acc.cash + toMain(c.cash, o.id),
+      debt: acc.debt + toMain(c.debt, o.id),
+      contract: acc.contract + toMain(o.contractAmount, o.id),
+      promised: acc.promised + toMain(c.promised, o.id),
     }),
     { cash: 0, debt: 0, contract: 0, promised: 0 },
   ))
@@ -30,7 +37,7 @@ const totals = computed(() =>
 const soon = computed(() => obligations(state.value).filter(o => o.overdue || o.soon).length)
 
 const kpis = computed(() => {
-  const out = [
+  const out: Kpi[] = [
     {
       label: t('Общая касса'),
       icon: 'ph:wallet',
@@ -52,74 +59,59 @@ const kpis = computed(() => {
   })
   return out
 })
-
-const width = (usage: number) => `${Math.max(0, Math.min(1, usage)) * 100}%`
-const tone = (usage: number) => (usage > 1 ? 'over' : usage > 0.8 ? 'hot' : '')
 </script>
 
 <template>
   <div>
-    <div class="head-row">
-      <div>
-        <h1>{{ t('Объекты') }}</h1>
-        <p class="sub">{{ state.objects.length }} {{ can.allObjects ? t('в системе') : t('доступно вам') }}</p>
-      </div>
-      <div class="acts no-print">
-        <select v-if="rows.length > 1" v-model="sort" :aria-label="t('Сортировка')" style="min-height: 36px">
-          <option value="cash">{{ t('Сначала с большей кассой') }}</option>
-          <option value="name">{{ t('По названию') }}</option>
-        </select>
-        <button v-if="can.manage" type="button" class="btn pri" @click="showForm = true">
-          <Icon name="ph:plus" />{{ t('Новый объект') }}
-        </button>
-      </div>
-    </div>
+    <PageHead
+      :title="t('Объекты')"
+      :sub="`${state.objects.length} ${can.allObjects ? t('в системе') : t('доступно вам')}`"
+    >
+      <button v-if="can.manage" type="button" class="btn pri" @click="showForm = true">
+        <Icon name="ph:plus" />{{ t('Новый объект') }}
+      </button>
+    </PageHead>
 
     <KpiStrip :items="kpis" />
 
-    <div v-if="loading && !rows.length" class="skel">
+    <div v-if="all.length > 1" class="filters no-print">
+      <div class="f" style="flex: 1 1 240px">
+        <label for="obj-q">{{ t('Поиск') }}</label>
+        <input id="obj-q" v-model="query" :placeholder="t('Название, заказчик или адрес')" autocomplete="off">
+      </div>
+      <div class="f">
+        <label for="obj-sort">{{ t('Сортировка') }}</label>
+        <select id="obj-sort" v-model="sort">
+          <option value="cash">{{ t('Сначала с большей кассой') }}</option>
+          <option v-if="can.seeContract" value="debt">{{ t('Сначала с большим долгом') }}</option>
+          <option value="name">{{ t('По названию') }}</option>
+        </select>
+      </div>
+    </div>
+
+    <div v-if="loading && !all.length" class="skel">
       <i /><i /><i />
     </div>
 
-    <div v-else-if="!rows.length" class="empty">
-      <Icon name="ph:buildings" />
-      <p v-if="can.manage">{{ t('Объектов пока нет. Создайте первый — этап, приходы и доли появятся внутри него.') }}</p>
-      <p v-else>{{ t('Вам пока не назначен ни один объект. Попросите владельца открыть доступ.') }}</p>
+    <EmptyState
+      v-else-if="!all.length"
+      icon="ph:buildings"
+      :text="can.manage
+        ? t('Объектов пока нет. Создайте первый — этап, приходы и доли появятся внутри него.')
+        : t('Вам пока не назначен ни один объект. Попросите владельца открыть доступ.')"
+    >
       <button v-if="can.manage" type="button" class="btn pri" @click="showForm = true">
         <Icon name="ph:plus" />{{ t('Создать объект') }}
       </button>
       <button v-else type="button" class="btn" @click="refresh()">
         <Icon name="ph:arrows-clockwise" />{{ t('Обновить') }}
       </button>
-    </div>
+    </EmptyState>
+
+    <EmptyState v-else-if="!rows.length" icon="ph:magnifying-glass" :text="t('Под поиск ничего не попало.')" />
 
     <div v-else class="cards">
-      <NuxtLink v-for="{ o, c } in rows" :key="o.id" class="ocard" :to="`/objects/${o.id}`">
-        <div class="t">
-          <Icon name="ph:buildings" />
-          {{ o.name }}
-          <span v-if="o.status === 'closed'" class="pill m">{{ t('закрыт') }}</span>
-        </div>
-        <div class="c">{{ o.customer || '—' }}<template v-if="o.address"> · {{ o.address }}</template></div>
-        <dl>
-          <template v-if="can.seeContract">
-            <dt>{{ t('Договор') }}</dt>
-            <dd>{{ m0(o.contractAmount, o.currency) }}</dd>
-          </template>
-          <dt>{{ t('Касса') }}</dt>
-          <dd :class="{ neg: c.cash < 0 }">{{ m(c.cash, o.currency) }}</dd>
-          <template v-if="can.seeContract">
-            <dt>{{ t('Дебиторка') }}</dt>
-            <dd>{{ m(c.debt, o.currency) }}</dd>
-          </template>
-          <dt>{{ t('Этапов') }}</dt>
-          <dd>{{ c.stages.length }}</dd>
-        </dl>
-        <template v-if="can.seeContract">
-          <div class="bar"><i :class="tone(c.usage)" :style="{ width: width(c.usage) }" /></div>
-          <div class="kpi-s">{{ t('Освоено {percent} поступивших', { percent: percent(c.usage) }) }}</div>
-        </template>
-      </NuxtLink>
+      <ObjectCard v-for="{ o, c } in rows" :key="o.id" :object="o" :totals="c" />
     </div>
 
     <ObjectForm :open="showForm" @close="showForm = false" @saved="id => router.push(`/objects/${id}`)" />

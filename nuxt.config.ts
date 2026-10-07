@@ -10,12 +10,19 @@ export default defineNuxtConfig({
 
   // Phosphor лежит в проекте пакетом. В сборку попадают только те иконки,
   // что реально встречаются в коде: вся коллекция — это 9 тысяч штук.
+  // Имена, которые собираются в коде на лету (значок валюты), сканер
+  // не видит — они перечислены явно. Сервер отдаёт коллекцию из пакета,
+  // а не ходит за ней в интернет: без сети значки не пропадают.
   icon: {
     mode: 'svg',
     class: 'ic',
     size: '1.4em',
-    serverBundle: false,
-    clientBundle: { scan: true, sizeLimitKb: 512 },
+    serverBundle: { collections: ['ph'] },
+    clientBundle: {
+      scan: { globInclude: ['app/**/*.{vue,ts}', 'shared/**/*.ts'] },
+      icons: ['ph:currency-dollar', 'ph:money'],
+      sizeLimitKb: 512,
+    },
   },
 
   app: {

@@ -1,5 +1,6 @@
-import { EMPTY_TOTALS, calcStage, type AppState, type Obj, type Op, type Stage, type StageTotals } from '#shared/calc'
+import { calcStage, type AppState, type Obj, type Op, type Stage, type StageTotals } from '#shared/calc'
 import { abilities } from '#shared/roles'
+import { narrowTotals, visibleOp } from '#shared/visibility'
 import type { SessionUser } from './auth'
 
 /**
@@ -9,8 +10,30 @@ import type { SessionUser } from './auth'
  * из которых можно собрать скрытое. У прораба на руках остаётся одна касса
  * и его собственные расходы: ни суммы договора, ни прихода, ни бонуса,
  * ни долей — доход на объекте по этим данным не восстанавливается.
+ * Правила видимости строк и итогов — в shared/visibility.ts, там же тесты.
  */
+
+/**
+ * Проекция зависит только от данных и от того, кто смотрит. Пока в базе
+ * ничего не записано, её незачем собирать заново: держим последнюю
+ * на каждого пользователя и сбрасываем, как только версия данных сменилась.
+ */
+const cache = new Map<string, { version: string; state: AppState }>()
+
+export function stateKey(user: SessionUser): string {
+  return `${dataVersion()}:${user.id}:${user.role}:${user.personId ?? ''}`
+}
+
 export function projectState(user: SessionUser): AppState {
+  const version = stateKey(user)
+  const hit = cache.get(user.id)
+  if (hit?.version === version) return hit.state
+  const state = buildState(user)
+  cache.set(user.id, { version, state })
+  return state
+}
+
+function buildState(user: SessionUser): AppState {
   const ab = abilities(user.role)
   const settings = readSettings()
   const allowed = ab.allObjects ? null : new Set(objectIdsFor(user.id))
@@ -37,10 +60,11 @@ export function projectState(user: SessionUser): AppState {
     else byStage.set(op.stageId, [op])
   }
   const versionOf = new Map(objects.map(o => [o.id, o.sharesVersion]))
+  const sharesAll = allSharesByVersion()
 
   const totals: Record<string, StageTotals> = {}
   for (const stage of rawStages) {
-    const shares = sharesOfVersion(versionOf.get(stage.objectId) ?? settings.sharesVersion)
+    const shares = sharesAll[String(versionOf.get(stage.objectId) ?? settings.sharesVersion)] ?? []
     const own = byStage.get(stage.id) ?? []
     const mine = own.filter(o => visibleOp(o, user))
     totals[stage.id] = narrowTotals(calcStage(stage, own, shares), mine, user)
@@ -50,7 +74,6 @@ export function projectState(user: SessionUser): AppState {
   const ops = rawOps.filter(o => visibleOp(o, user))
   const opIds = new Set(ops.map(o => o.id))
   const stageIds = new Set(rawStages.map(s => s.id))
-  const sharesAll = allSharesByVersion()
 
   return {
     me: { id: user.id, name: user.name, login: user.login, role: user.role, personId: user.personId },
@@ -59,7 +82,10 @@ export function projectState(user: SessionUser): AppState {
     // Снятые с учёта — только имена для старых записей, в выборе их нет.
     archived: { people: readArchivedPeople(), categories: readArchivedCategories() },
     // Клиенты и планы раскрывают экономику объекта — прорабу они не видны.
-    clients: ab.seeContract ? readClients() : [],
+    // Клиент — это контакты и деньги. Кто видит не все объекты, видит только их заказчиков.
+    clients: ab.seeContract
+      ? readClients().filter(c => ab.allObjects || objects.some(o => o.clientId === c.id))
+      : [],
     budgets: ab.seeContract ? readBudgets().filter(b => visibleObjects.has(b.objectId)) : [],
     allocations: ab.seeContract ? readAllocations().filter(a => stageIds.has(a.stageId)) : [],
     settings: {
@@ -84,41 +110,5 @@ export function projectState(user: SessionUser): AppState {
       (a.objectId && visibleObjects.has(a.objectId)) || (a.operationId && opIds.has(a.operationId))),
     users: ab.manage ? readUsers() : [],
     totals,
-  }
-}
-
-/** Какие строки ленты роль вправе видеть. */
-function visibleOp(op: Op, user: SessionUser): boolean {
-  const ab = abilities(user.role)
-  if (ab.seeBonus && ab.seeAllShares) return true
-  if (op.isAuto) return false                       // строки бонуса
-  if (!ab.seeContract) return op.kind === 'exp'     // прораб: только расходы
-  if (op.kind === 'adv') return op.personId === user.personId // участник: свои авансы
-  return true
-}
-
-/**
- * Урезание показателей. Важно не «обнулить лишнее», а не отдать слагаемых,
- * по которым скрытое вычисляется вычитанием.
- */
-function narrowTotals(full: StageTotals, visible: Op[], user: SessionUser): StageTotals {
-  const ab = abilities(user.role)
-  if (ab.seeBonus && ab.seeAllShares) return full
-
-  // Прораб: касса объекта и сумма расходов, которые он и так видит построчно.
-  if (!ab.seeContract) {
-    const sum = (status: Op['status']) =>
-      visible.reduce((a, o) => a + (o.status === status ? (o.amountBase ?? o.amount) : 0), 0)
-    return { ...EMPTY_TOTALS, cash: full.cash, exp: sum('ok'), promised: sum('promised') }
-  }
-
-  // Участник: всё, кроме бонуса и чужих долей.
-  return {
-    ...full,
-    bonus: 0,
-    parts: ab.seeOwnShare ? full.parts.filter(p => p.personId === user.personId) : [],
-    dueTotal: ab.seeOwnShare
-      ? full.parts.filter(p => p.personId === user.personId).reduce((a, p) => a + p.due, 0)
-      : 0,
   }
 }

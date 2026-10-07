@@ -20,6 +20,12 @@ export default defineEventHandler(async (event) => {
     teams?: Array<{ id: string; name: string; composite?: boolean; parts?: string[] }>
   }>(event)
 
+  // Справочник сохраняется целиком: чего нет в списке, уходит в архив.
+  // Поэтому неполный запрос — не «ничего не менять», а ошибка.
+  for (const key of ['people', 'categories', 'shares', 'bonusScale', 'teams'] as const) {
+    must(Array.isArray(body?.[key]), 'Справочник прислан не полностью: нет раздела «{field}»', { field: key })
+  }
+
   const teams = (body.teams ?? []).map(t => ({
     id: text(t.id, 'команда: id', { required: true, max: 64 }),
     name: text(t.name, 'команда: название', { required: true, max: 120 }),
@@ -86,7 +92,7 @@ export default defineEventHandler(async (event) => {
     const db = useDb()
     const now = new Date().toISOString()
 
-    if (body.currency) setMeta('currency', text(body.currency, 'валюта', { max: 3 }).toUpperCase())
+    if (body.currency) setMeta('currency', currencyCode(body.currency))
     if (body.displayRate != null) {
       const shown = Number(body.displayRate)
       must(Number.isFinite(shown) && shown > 0, 'Курс показа должен быть больше нуля')

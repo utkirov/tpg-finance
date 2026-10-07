@@ -80,10 +80,11 @@ async function remove(teamId: string) {
       </button>
     </div>
 
-    <div v-if="!rows.length" class="empty">
-      <Icon name="ph:users-three" />
-      <p>{{ t('На этот этап командам ничего не выделено. Выделите часть плана — так видно, что этап должен закрыть.') }}</p>
-    </div>
+    <EmptyState
+      v-if="!rows.length"
+      icon="ph:users-three"
+      :text="t('На этот этап командам ничего не выделено. Выделите часть плана — так видно, что этап должен закрыть.')"
+    />
 
     <div v-else class="tw">
       <table class="stack">
