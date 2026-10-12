@@ -1,0 +1,3 @@
+## 2024-05-18 - Missing ARIA Labels on Icon-only Buttons
+**Learning:** Many icon-only buttons (like delete buttons or close buttons) using `class="x"` and `class="icon-btn"` had a `:title` attribute for visual tooltips, but lacked `:aria-label` for screen reader accessibility. Since `:title` is not reliably announced by all screen readers, relying solely on it is an accessibility antipattern.
+**Action:** When adding new icon-only buttons or maintaining existing ones, ensure both `:title` (for sighted users) and `:aria-label` (for assistive technologies) are present and consistent. Often, they can share the same translated string.
