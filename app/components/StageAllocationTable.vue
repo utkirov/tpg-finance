@@ -118,6 +118,7 @@ async function remove(teamId: string) {
                   v-if="r.allocated > 0"
                   type="button"
                   class="x"
+                  :aria-label="t('Убрать')"
                   :title="t('Убрать')"
                   @click="remove(r.teamId)"
                 >
