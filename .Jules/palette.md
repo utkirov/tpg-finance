@@ -1,0 +1,3 @@
+## 2024-10-16 - ARIA labels for icon-only buttons
+**Learning:** Found multiple instances where `<button type="button" class="x" :title="t('Убрать')">` or `class="icon-btn"` were used without explicit `aria-label`. The `:title` attribute provides a tooltip on hover, but is often insufficient for screen reader users who rely on the `aria-label` or inner text to understand the button's purpose when navigating interactively.
+**Action:** When adding or modifying icon-only buttons (especially delete/remove `x` buttons), always ensure that both `:title` and `:aria-label` are present and typically match (e.g., `:title="t('Убрать')" :aria-label="t('Убрать')"`).
