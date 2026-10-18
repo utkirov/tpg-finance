@@ -1,0 +1,3 @@
+## 2026-10-18 - ARIA labels for Icon-Only Buttons
+**Learning:** Icon-only buttons relying purely on `title` tooltips are insufficiently accessible to screen readers if they lack explicit `aria-label`s. The existing Vue components pattern here involves using `class="x"` or `class="icon-btn"` often passing localized string tooltips like `:title="t('Убрать')"`.
+**Action:** When adding or updating icon-only buttons, always reuse the localized string tooltips for an explicit ARIA label (e.g., `:title="t('Убрать')" :aria-label="t('Убрать')"`) to ensure equal functional descriptions are available to assistive technologies.
