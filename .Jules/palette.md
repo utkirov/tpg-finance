@@ -1,0 +1,3 @@
+## 2024-05-18 - Missing ARIA Labels on Icon-only Buttons
+**Learning:** Found multiple instances where `icon-btn` and `x` utility classes were used for icon-only buttons (like delete or add actions) containing only `<Icon />` components. While they correctly had `:title` attributes for tooltips, they lacked `:aria-label` attributes, making them inaccessible to screen readers which don't consistently read tooltips.
+**Action:** When adding or modifying icon-only buttons, duplicate the `:title` binding for `:aria-label` (e.g. `:title="t('Убрать')" :aria-label="t('Убрать')"`) to ensure accessibility.
