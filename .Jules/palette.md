@@ -1,0 +1,3 @@
+## 2024-04-12 - Icon-only buttons accessibility pattern
+**Learning:** Found a recurring pattern of icon-only buttons missing ARIA labels across multiple Vue components (e.g., `StageAllocationTable`, `TeamPlanTable`, `ObjectForm`, `ClientPicker`). These often have a `title` attribute for mouse users but lack the `aria-label` needed for screen readers.
+**Action:** When reviewing or modifying components, explicitly check for buttons with `class="icon-btn"`, `class="x"`, or `class="add"` that contain only an `<Icon />` tag and ensure they have an `:aria-label="t('localized text')"` attribute, typically mirroring the `:title` attribute if one exists.
