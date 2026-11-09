@@ -1,0 +1,3 @@
+## 2024-11-10 - Add aria-label to title tooltips for icon-only buttons
+**Learning:** In Nuxt/Vue apps where icon-only buttons rely on the `title` attribute for tooltips (e.g., `:title="t('Убрать')"`), screen readers may not consistently read the `title` attribute for accessibility. It is a best practice to explicitly add an `aria-label` attribute with the exact same value.
+**Action:** Always pair a `title` tooltip with an `aria-label` for icon-only buttons unless there is a specific reason not to. Duplicate the existing title translation (e.g., `:aria-label="t('Убрать')"`) to ensure accessibility.
